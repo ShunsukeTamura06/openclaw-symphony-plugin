@@ -1,0 +1,20 @@
+{
+  "id": "symphony",
+  "activation": {
+    "onStartup": false
+  },
+  "channels": ["symphony"],
+  "channelEnvVars": {
+    "symphony": [
+      "OPENCLAW_SYMPHONY_POD_URL",
+      "OPENCLAW_SYMPHONY_AGENT_URL",
+      "OPENCLAW_SYMPHONY_BOT_USERNAME",
+      "OPENCLAW_SYMPHONY_PRIVATE_KEY_PATH"
+    ]
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}

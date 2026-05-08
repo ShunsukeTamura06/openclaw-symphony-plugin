@@ -1,0 +1,67 @@
+{
+  "name": "@openclaw/symphony",
+  "version": "0.1.0",
+  "description": "OpenClaw Symphony channel plugin (Symphony REST API + Datafeed v2)",
+  "license": "MIT",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ShunsukeTamura06/openclaw-symphony-plugin"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "smoke:send": "tsx scripts/smoke-send.ts",
+    "smoke:datafeed": "tsx scripts/smoke-datafeed.ts"
+  },
+  "exports": {
+    ".": "./index.ts",
+    "./api": "./api.ts",
+    "./runtime-api": "./runtime-api.ts",
+    "./symphony-client": "./src/symphony/client.ts"
+  },
+  "files": [
+    "index.ts",
+    "api.ts",
+    "runtime-api.ts",
+    "src",
+    "openclaw.plugin.json",
+    "README.md",
+    "LICENSE"
+  ],
+  "dependencies": {
+    "zod": "^3.23.0"
+  },
+  "peerDependencies": {
+    "openclaw": ">=2026.5.6"
+  },
+  "peerDependenciesMeta": {
+    "openclaw": { "optional": true }
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "dotenv": "^16.4.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  },
+  "openclaw": {
+    "extensions": ["./index.ts"],
+    "channel": {
+      "id": "symphony",
+      "label": "Symphony",
+      "selectionLabel": "Symphony (Bot)",
+      "docsPath": "/channels/symphony",
+      "blurb": "Symphony Messaging via REST API + Datafeed v2 (RSA-JWT bot auth).",
+      "aliases": ["symphony-chat"]
+    },
+    "compat": {
+      "pluginApi": ">=2026.5.6"
+    }
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

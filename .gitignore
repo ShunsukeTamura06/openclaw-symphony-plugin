@@ -1,0 +1,24 @@
+node_modules/
+dist/
+coverage/
+*.log
+.DS_Store
+
+# Local secrets / private keys
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+private/
+secrets/
+
+# IDE
+.vscode/
+.idea/
+
+# Cloned upstream reference (not part of this plugin)
+openclaw/
+
+# Claude session files
+.claude/

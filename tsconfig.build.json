@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "outDir": "dist"
+  },
+  "include": [
+    "index.ts",
+    "api.ts",
+    "runtime-api.ts",
+    "src/**/*.ts"
+  ],
+  "exclude": ["node_modules", "dist", "openclaw", "test", "scripts", "**/*.test.ts"]
+}
