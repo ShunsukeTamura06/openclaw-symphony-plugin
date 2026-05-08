@@ -23,6 +23,7 @@ attachments, mentions, emojis, Datafeed v2 long-poll. See
 | Mentions | `<mention uid="…"/>` and `<mention email="…"/>` produced via `plainToMessageMl({ mentions })` |
 | Emojis | `<emoji shortcode="…"/>` |
 | Receive (Datafeed v2) | Long-poll loop, auto-recreates feed on 400/404 |
+| Inbound → AI dispatch | Wired via `openclaw/plugin-sdk/inbound-reply-dispatch` (`runInboundReplyTurn`); resolves agent route, records session, dispatches to OpenClaw's AI reply pipeline, delivers reply back to Symphony |
 | Token auth | RS512 JWT → sessionToken + keyManagerToken; transparent refresh on 401 |
 
 ## Install
