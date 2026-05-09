@@ -72,7 +72,7 @@ function createMockPod(opts?: { sessionUserId?: number; failFirstReadWith?: numb
     const u = new URL(url);
     const path = u.pathname;
     const method = init?.method ?? "GET";
-    const headers = new Headers(init?.headers as HeadersInit | undefined);
+    const headers = new Headers((init?.headers ?? {}) as Record<string, string>);
 
     // Auth: pod and relay/km issuers
     if (method === "POST" && (path === "/login/pubkey/authenticate" || path === "/relay/pubkey/authenticate")) {
