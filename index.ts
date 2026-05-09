@@ -13,7 +13,7 @@ type ChannelPluginEntry = {
 const entry: ChannelPluginEntry = defineChannelPluginEntry({
   id: "symphony",
   name: "Symphony",
-  description: "Symphony channel plugin (REST API + Datafeed v2, RSA-JWT bot auth)",
+  description: "Symphony channel plugin (REST API + Datafeed v5, RSA-JWT bot auth)",
   plugin: symphonyPlugin,
   setRuntime: (runtime) => setSymphonyRuntime(runtime),
 }) as unknown as ChannelPluginEntry;

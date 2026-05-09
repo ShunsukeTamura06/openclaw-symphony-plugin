@@ -3,14 +3,14 @@
 OpenClaw channel plugin for [Symphony](https://symphony.com/) Messaging.
 
 Lets an OpenClaw on-prem deployment send and receive messages on Symphony using
-the [Symphony REST API](https://rest-api.symphony.com/) and **Datafeed v2** for
+the [Symphony REST API](https://rest-api.symphony.com/) and **Datafeed v5** for
 inbound events. Authentication uses the standard **RSA-JWT bot
 (service-account) flow** — no browser, no OAuth.
 
 ## Status
 
 **v0.1.0 — initial cut.** Core paths covered: 1:1 IM and room/stream messaging,
-attachments, mentions, emojis, Datafeed v2 long-poll. See
+attachments, mentions, emojis, Datafeed v5 long-poll. See
 [Limitations](#limitations) for what is intentionally out of scope.
 
 ## Features
@@ -22,7 +22,7 @@ attachments, mentions, emojis, Datafeed v2 long-poll. See
 | Attachments | Multipart upload via `attachments: [{ filename, content, contentType }]` |
 | Mentions | `<mention uid="…"/>` and `<mention email="…"/>` produced via `plainToMessageMl({ mentions })` |
 | Emojis | `<emoji shortcode="…"/>` |
-| Receive (Datafeed v2) | Long-poll loop, auto-recreates feed on 400/404 |
+| Receive (Datafeed v5) | Long-poll loop, auto-recreates feed on 400/404 |
 | Inbound → AI dispatch | Wired via `openclaw/plugin-sdk/inbound-reply-dispatch` (`runInboundReplyTurn`); resolves agent route, records session, dispatches to OpenClaw's AI reply pipeline, delivers reply back to Symphony |
 | Token auth | RS512 JWT → sessionToken + keyManagerToken; transparent refresh on 401 |
 

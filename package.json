@@ -1,7 +1,7 @@
 {
   "name": "@openclaw/symphony",
   "version": "0.1.0",
-  "description": "OpenClaw Symphony channel plugin (Symphony REST API + Datafeed v2)",
+  "description": "OpenClaw Symphony channel plugin (Symphony REST API + Datafeed v5)",
   "license": "MIT",
   "type": "module",
   "repository": {
@@ -59,7 +59,7 @@
       "label": "Symphony",
       "selectionLabel": "Symphony (Bot)",
       "docsPath": "/channels/symphony",
-      "blurb": "Symphony Messaging via REST API + Datafeed v2 (RSA-JWT bot auth).",
+      "blurb": "Symphony Messaging via REST API + Datafeed v5 (RSA-JWT bot auth).",
       "aliases": [
         "symphony-chat"
       ]

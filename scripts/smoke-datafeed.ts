@@ -1,5 +1,5 @@
 /**
- * Manual smoke test: subscribe to Datafeed v2 for 30s and print incoming messages.
+ * Manual smoke test: subscribe to Datafeed v5 for 30s and print incoming messages.
  *
  *   pnpm smoke:datafeed
  */

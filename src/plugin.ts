@@ -30,7 +30,7 @@ export const symphonyPlugin = createChatChannelPlugin<ResolvedSymphonyAccount, S
       label: "Symphony",
       selectionLabel: "Symphony (Bot)",
       docsPath: "/channels/symphony",
-      blurb: "Symphony Messaging via REST API + Datafeed v2 (RSA-JWT bot auth).",
+      blurb: "Symphony Messaging via REST API + Datafeed v5 (RSA-JWT bot auth).",
       aliases: ["symphony-chat"],
     },
     capabilities: {
