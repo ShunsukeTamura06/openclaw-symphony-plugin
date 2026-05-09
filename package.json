@@ -32,30 +32,37 @@
     "LICENSE"
   ],
   "dependencies": {
-    "zod": "^3.23.0"
+    "zod": "^4.4.3"
   },
   "peerDependencies": {
     "openclaw": ">=2026.5.6"
   },
   "peerDependenciesMeta": {
-    "openclaw": { "optional": true }
+    "openclaw": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
     "dotenv": "^16.4.0",
+    "openclaw": "^2026.5.7",
     "tsx": "^4.19.0",
     "typescript": "^5.6.0",
     "vitest": "^2.1.0"
   },
   "openclaw": {
-    "extensions": ["./index.ts"],
+    "extensions": [
+      "./index.ts"
+    ],
     "channel": {
       "id": "symphony",
       "label": "Symphony",
       "selectionLabel": "Symphony (Bot)",
       "docsPath": "/channels/symphony",
       "blurb": "Symphony Messaging via REST API + Datafeed v2 (RSA-JWT bot auth).",
-      "aliases": ["symphony-chat"]
+      "aliases": [
+        "symphony-chat"
+      ]
     },
     "compat": {
       "pluginApi": ">=2026.5.6"

@@ -2,7 +2,7 @@ export { symphonyPlugin, SYMPHONY_DEFAULT_ACCOUNT_ID } from "./src/plugin.js";
 export { symphonyOutboundAdapter, symphonyMessageAdapter, sendSymphonyMessage } from "./src/outbound.js";
 export { symphonyGatewayAdapter } from "./src/gateway.js";
 export { symphonyStatusAdapter } from "./src/status.js";
-export { symphonySetupAdapter, symphonySetupWizard } from "./src/setup.js";
+export { symphonySetupAdapter, describeSymphonyAccount } from "./src/setup.js";
 export { SymphonyChannelConfigSchema, SymphonyAccountConfigSchema } from "./src/config-schema.js";
 export {
   getAccountConfig,

@@ -1,76 +1,57 @@
+import type {
+  ChannelSetupAdapter,
+  ChannelSetupInput,
+} from "openclaw/plugin-sdk/channel-setup";
+import type { OpenClawConfig } from "openclaw/plugin-sdk/channel-core";
 import { isAccountConfigured } from "./config.js";
-import type { SymphonyAccountConfig } from "./types.js";
+import { CHANNEL_ID, type SymphonyAccountConfig } from "./types.js";
 
-export const symphonySetupAdapter = {
-  describeAccount(account: SymphonyAccountConfig | undefined) {
-    return {
-      configured: isAccountConfigured(account),
-      summary: account
-        ? `Symphony bot ${account.username} @ ${account.podUrl}`
-        : "Symphony account not configured",
-    };
+export const symphonySetupAdapter: ChannelSetupAdapter = {
+  applyAccountConfig({ cfg, accountId, input }) {
+    return writeSymphonyAccount({ cfg, accountId, input });
   },
-  validateAccount(account: SymphonyAccountConfig | undefined): string[] {
-    const issues: string[] = [];
-    if (!account) {
-      issues.push("No Symphony account configured (channels.symphony.accounts.<id>).");
-      return issues;
+  validateInput({ input }) {
+    if (input.privateKey !== undefined && !input.privateKey.includes("PRIVATE KEY")) {
+      return "Symphony privateKey must be a PEM-encoded RSA private key";
     }
-    if (!account.podUrl) issues.push("podUrl is required");
-    if (!account.agentUrl) issues.push("agentUrl is required");
-    if (!account.username) issues.push("username is required");
-    if (!account.privateKeyPath) issues.push("privateKeyPath is required");
-    return issues;
+    return null;
   },
-} as const;
+};
 
-export const symphonySetupWizard = {
-  id: "symphony",
-  title: "Symphony",
-  steps: [
-    {
-      id: "pod-url",
-      kind: "text",
-      label: "Pod URL",
-      placeholder: "https://acme.symphony.com",
-      help: "Symphony Pod base URL.",
-      required: true,
-      configPath: "channels.symphony.podUrl",
-    },
-    {
-      id: "agent-url",
-      kind: "text",
-      label: "Agent URL",
-      placeholder: "https://acme-agent.symphony.com",
-      help: "Symphony Agent base URL.",
-      required: true,
-      configPath: "channels.symphony.agentUrl",
-    },
-    {
-      id: "username",
-      kind: "text",
-      label: "Bot username",
-      help: "Service-account username registered in Symphony admin portal.",
-      required: true,
-      configPath: "channels.symphony.username",
-    },
-    {
-      id: "private-key-path",
-      kind: "text",
-      label: "Private key path",
-      placeholder: "/absolute/path/to/bot-private.pem",
-      help: "Absolute path to the RSA private key whose public key was uploaded for the bot.",
-      required: true,
-      configPath: "channels.symphony.privateKeyPath",
-      sensitive: false,
-    },
-    {
-      id: "relay-url",
-      kind: "text",
-      label: "Relay URL (optional)",
-      placeholder: "Leave blank to reuse Pod URL",
-      configPath: "channels.symphony.relayUrl",
-      required: false,
-    },
-  ],
-} as const;
+function writeSymphonyAccount(params: {
+  cfg: OpenClawConfig;
+  accountId: string;
+  input: ChannelSetupInput;
+}): OpenClawConfig {
+  const { cfg, accountId, input } = params;
+
+  const next = structuredClone(cfg) as Record<string, unknown>;
+  const channels = (next.channels = (next.channels as Record<string, unknown> | undefined) ?? {});
+  const symphony = (channels[CHANNEL_ID] = (channels[CHANNEL_ID] as Record<string, unknown> | undefined) ?? {});
+  const accounts = (symphony.accounts = (symphony.accounts as Record<string, unknown> | undefined) ?? {});
+
+  const existing = (accounts[accountId] as Partial<SymphonyAccountConfig> | undefined) ?? {};
+  const merged: Partial<SymphonyAccountConfig> = { ...existing };
+
+  // Map the generic ChannelSetupInput bag to Symphony account fields.
+  // Symphony has no perfect 1:1 with the SDK bag; use the closest standard fields.
+  if (input.httpUrl) merged.podUrl = input.httpUrl;
+  if (input.baseUrl) merged.agentUrl = input.baseUrl;
+  if (input.userId) merged.username = input.userId;
+  if (input.tokenFile) merged.privateKeyPath = input.tokenFile;
+
+  accounts[accountId] = merged;
+  return next as OpenClawConfig;
+}
+
+export function describeSymphonyAccount(account: SymphonyAccountConfig | undefined): {
+  configured: boolean;
+  summary: string;
+} {
+  return {
+    configured: isAccountConfigured(account),
+    summary: account
+      ? `Symphony bot ${account.username} @ ${account.podUrl}`
+      : "Symphony account not configured",
+  };
+}

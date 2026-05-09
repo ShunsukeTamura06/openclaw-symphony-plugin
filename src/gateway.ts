@@ -1,4 +1,10 @@
+import type { OpenClawConfig } from "openclaw/plugin-sdk/channel-core";
+import type {
+  ChannelGatewayContext,
+  ChannelLogSink,
+} from "openclaw/plugin-sdk/channel-contract";
 import { runInboundReplyTurn } from "openclaw/plugin-sdk/inbound-reply-dispatch";
+import type { ReplyPayload } from "openclaw/plugin-sdk/reply-payload";
 import { sendSymphonyMessage } from "./outbound.js";
 import {
   extractMessageFromEvent,
@@ -7,54 +13,52 @@ import {
 } from "./normalize.js";
 import { getOrCreateClient, getSymphonyRuntime } from "./runtime.js";
 import { runDatafeedLoop } from "./symphony/datafeed-loop.js";
-import type { ResolvedSymphonyAccount } from "./types.js";
+import { CHANNEL_ID, type ResolvedSymphonyAccount } from "./types.js";
 
-type ChannelRuntimeSurface = {
-  routing?: {
+type RunInboundReplyTurnParams = Parameters<typeof runInboundReplyTurn<NormalizedInboundMessage>>[0];
+type ChannelTurnAdapter = RunInboundReplyTurnParams["adapter"];
+type ResolvedChannelTurn = ReturnType<ChannelTurnAdapter["resolveTurn"]> extends Promise<infer T>
+  ? T
+  : ReturnType<ChannelTurnAdapter["resolveTurn"]>;
+
+type AgentRoute = {
+  agentId: string;
+  sessionKey: string;
+  mainSessionKey: string;
+  lastRoutePolicy: "main" | "session";
+};
+
+type FullChannelRuntime = {
+  routing: {
     resolveAgentRoute: (input: {
-      cfg: unknown;
+      cfg: OpenClawConfig;
       channel: string;
       accountId?: string | null;
       peer?: { kind: "direct" | "group"; id: string } | null;
-    }) => {
-      agentId: string;
-      sessionKey: string;
-      mainSessionKey: string;
-      lastRoutePolicy: "main" | "session";
-    };
+    }) => AgentRoute;
   };
-  session?: {
-    resolveStorePath: (store?: string, opts?: { agentId?: string }) => string;
-    recordInboundSession: unknown;
+  session: {
+    resolveStorePath: (store: string | undefined, opts?: { agentId?: string }) => string;
+    recordInboundSession: ResolvedChannelTurn extends { recordInboundSession: infer R } ? R : never;
   };
-  reply?: {
-    finalizeInboundContext: <T extends Record<string, unknown>>(ctx: T, opts?: unknown) => T;
-    dispatchReplyWithBufferedBlockDispatcher: unknown;
+  reply: {
+    finalizeInboundContext: <T extends Record<string, unknown>>(ctx: T) => ResolvedChannelTurn extends { ctxPayload: infer C } ? C : never;
+    dispatchReplyWithBufferedBlockDispatcher: ResolvedChannelTurn extends {
+      dispatchReplyWithBufferedBlockDispatcher: infer D;
+    }
+      ? D
+      : never;
   };
 };
 
-export type SymphonyGatewayContext = {
-  cfg: unknown;
-  accountId: string;
-  account: ResolvedSymphonyAccount;
-  abortSignal?: AbortSignal;
-  setStatus?: (status: {
-    accountId: string;
-    running: boolean;
-    lastError?: string | null;
-    lastStartAt?: number;
-    lastStopAt?: number;
-  }) => void;
-  log?: { info: (msg: string) => void; warn?: (msg: string) => void; error?: (msg: string) => void };
-  channelRuntime?: ChannelRuntimeSurface;
-};
+export type SymphonyGatewayContext = ChannelGatewayContext<ResolvedSymphonyAccount>;
 
 export const symphonyGatewayAdapter = {
   async startAccount(ctx: SymphonyGatewayContext): Promise<void> {
-    const log = adoptLog(ctx);
+    const log = adoptLog(ctx.log);
 
     if (!ctx.account.privateKeyPath) {
-      ctx.setStatus?.({
+      ctx.setStatus({
         accountId: ctx.accountId,
         running: false,
         lastError: "privateKeyPath is required",
@@ -62,7 +66,7 @@ export const symphonyGatewayAdapter = {
       return;
     }
 
-    ctx.setStatus?.({
+    ctx.setStatus({
       accountId: ctx.accountId,
       running: true,
       lastStartAt: Date.now(),
@@ -79,14 +83,14 @@ export const symphonyGatewayAdapter = {
       log.info(`Authenticated as ${session.displayName ?? session.username ?? session.id}`);
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
-      log.error?.(`Symphony authentication failed: ${msg}`);
-      ctx.setStatus?.({ accountId: ctx.accountId, running: false, lastError: msg });
+      log.error(`Symphony authentication failed: ${msg}`);
+      ctx.setStatus({ accountId: ctx.accountId, running: false, lastError: msg });
       return;
     }
 
-    const channelRuntime = ctx.channelRuntime;
+    const channelRuntime = ctx.channelRuntime as unknown as FullChannelRuntime | undefined;
     if (!channelRuntime?.routing || !channelRuntime.session || !channelRuntime.reply) {
-      log.warn?.(
+      log.warn(
         "channelRuntime not available — Symphony will receive events but cannot dispatch to AI",
       );
     }
@@ -96,10 +100,10 @@ export const symphonyGatewayAdapter = {
     await runDatafeedLoop({
       client,
       tag,
-      ...(ctx.abortSignal ? { signal: ctx.abortSignal } : {}),
+      signal: ctx.abortSignal,
       handlers: {
         onLog: (m) => log.info(m),
-        onError: (e) => log.error?.(e instanceof Error ? e.message : String(e)),
+        onError: (e) => log.error(e instanceof Error ? e.message : String(e)),
         onEvent: async (envelope) => {
           const message = extractMessageFromEvent(envelope);
           if (!message) {
@@ -126,8 +130,8 @@ export const symphonyGatewayAdapter = {
   },
 
   async stopAccount(ctx: SymphonyGatewayContext): Promise<void> {
-    const log = adoptLog(ctx);
-    ctx.setStatus?.({
+    const log = adoptLog(ctx.log);
+    ctx.setStatus({
       accountId: ctx.accountId,
       running: false,
       lastStopAt: Date.now(),
@@ -137,11 +141,11 @@ export const symphonyGatewayAdapter = {
 };
 
 async function dispatchInboundToAi(params: {
-  cfg: unknown;
+  cfg: OpenClawConfig;
   accountId: string;
   normalized: NormalizedInboundMessage;
-  channelRuntime: ChannelRuntimeSurface | undefined;
-  log: AdoptedLog;
+  channelRuntime: FullChannelRuntime | undefined;
+  log: ChannelLogSink;
 }): Promise<void> {
   const { cfg, accountId, normalized, channelRuntime, log } = params;
 
@@ -152,7 +156,7 @@ async function dispatchInboundToAi(params: {
   const peerKind = normalized.isDirect ? ("direct" as const) : ("group" as const);
   const route = channelRuntime.routing.resolveAgentRoute({
     cfg,
-    channel: "symphony",
+    channel: CHANNEL_ID,
     accountId,
     peer: { kind: peerKind, id: normalized.streamId },
   });
@@ -161,8 +165,9 @@ async function dispatchInboundToAi(params: {
     agentId: route.agentId,
   });
 
-  const senderLabel = normalized.sender.displayName ?? normalized.sender.email ?? normalized.sender.id;
-  const baseCtx: Record<string, unknown> = {
+  const senderLabel =
+    normalized.sender.displayName ?? normalized.sender.email ?? normalized.sender.id;
+  const baseCtx = {
     Body: normalized.text,
     BodyForAgent: normalized.text,
     BodyForCommands: normalized.text,
@@ -177,8 +182,8 @@ async function dispatchInboundToAi(params: {
   const ctxPayload = channelRuntime.reply.finalizeInboundContext(baseCtx);
 
   try {
-    await runInboundReplyTurn({
-      channel: "symphony",
+    await runInboundReplyTurn<NormalizedInboundMessage>({
+      channel: CHANNEL_ID,
       accountId,
       raw: normalized,
       adapter: {
@@ -191,52 +196,47 @@ async function dispatchInboundToAi(params: {
           raw: normalized,
         }),
         resolveTurn: () => ({
-          channel: "symphony",
+          cfg,
+          channel: CHANNEL_ID,
           accountId,
           agentId: route.agentId,
           routeSessionKey: route.sessionKey,
           storePath,
-          ctxPayload: ctxPayload as never,
-          recordInboundSession: channelRuntime.session!.recordInboundSession as never,
+          ctxPayload,
+          recordInboundSession: channelRuntime.session.recordInboundSession,
           dispatchReplyWithBufferedBlockDispatcher:
-            channelRuntime.reply!.dispatchReplyWithBufferedBlockDispatcher as never,
+            channelRuntime.reply.dispatchReplyWithBufferedBlockDispatcher,
           delivery: {
-            deliver: async (payload: { text?: string; mediaUrl?: string; mediaUrls?: string[] }) => {
+            deliver: async (payload: ReplyPayload) => {
               const text = payload.text ?? "";
               if (!text && !payload.mediaUrl) {
                 return;
               }
               await sendSymphonyMessage({
-                cfg: cfg as Record<string, unknown> | undefined,
+                cfg,
                 accountId,
                 streamId: normalized.streamId,
                 options: { text },
               });
             },
             onError: (err: unknown, info: { kind: string }) => {
-              log.error?.(
+              log.error(
                 `Symphony reply (${info.kind}) failed: ${err instanceof Error ? err.message : String(err)}`,
               );
             },
           },
-        } as never),
-      } as never,
+        }),
+      },
     });
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
-    log.error?.(`Failed to dispatch Symphony inbound to AI: ${msg}`);
+    log.error(`Failed to dispatch Symphony inbound to AI: ${msg}`);
   }
 }
 
-type AdoptedLog = {
-  info: (msg: string) => void;
-  warn?: (msg: string) => void;
-  error?: (msg: string) => void;
-};
-
-function adoptLog(ctx: SymphonyGatewayContext): AdoptedLog {
-  if (ctx.log?.info) {
-    return ctx.log;
+function adoptLog(sink: ChannelLogSink | undefined): ChannelLogSink {
+  if (sink) {
+    return sink;
   }
   const fallback = getSymphonyRuntime();
   return {

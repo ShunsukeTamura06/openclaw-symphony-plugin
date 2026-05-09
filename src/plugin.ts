@@ -1,4 +1,8 @@
-import { createChatChannelPlugin } from "openclaw/plugin-sdk/channel-core";
+import {
+  buildChannelConfigSchema,
+  createChatChannelPlugin,
+  type OpenClawConfig,
+} from "openclaw/plugin-sdk/channel-core";
 import { createPairingPrefixStripper } from "openclaw/plugin-sdk/channel-pairing";
 import {
   getAccountConfig,
@@ -9,12 +13,16 @@ import {
 import { SymphonyChannelConfigSchema } from "./config-schema.js";
 import { symphonyGatewayAdapter } from "./gateway.js";
 import { symphonyMessageAdapter, symphonyOutboundAdapter } from "./outbound.js";
-import { symphonySetupAdapter, symphonySetupWizard } from "./setup.js";
-import { symphonyStatusAdapter } from "./status.js";
-import { CHANNEL_ID, DEFAULT_ACCOUNT_ID, type ResolvedSymphonyAccount } from "./types.js";
+import { symphonySetupAdapter } from "./setup.js";
+import { describeSymphonyAccountSnapshot, symphonyStatusAdapter } from "./status.js";
+import {
+  CHANNEL_ID,
+  DEFAULT_ACCOUNT_ID,
+  type ResolvedSymphonyAccount,
+  type SymphonyAccountProbe,
+} from "./types.js";
 
-export const symphonyPlugin = createChatChannelPlugin<ResolvedSymphonyAccount>({
-  // oxlint-disable-next-line typescript/no-explicit-any
+export const symphonyPlugin = createChatChannelPlugin<ResolvedSymphonyAccount, SymphonyAccountProbe>({
   base: {
     id: CHANNEL_ID,
     meta: {
@@ -26,11 +34,9 @@ export const symphonyPlugin = createChatChannelPlugin<ResolvedSymphonyAccount>({
       aliases: ["symphony-chat"],
     },
     capabilities: {
-      chatTypes: ["dm", "group"],
+      chatTypes: ["direct", "group"],
     },
     setup: symphonySetupAdapter,
-    setupWizard: symphonySetupWizard,
-    message: symphonyMessageAdapter,
     messaging: {
       targetPrefixes: ["symphony"],
       normalizeTarget: (target: string): string | undefined => {
@@ -56,12 +62,13 @@ export const symphonyPlugin = createChatChannelPlugin<ResolvedSymphonyAccount>({
         hint: "<streamId|symphony:streamId>",
       },
     },
-    configSchema: SymphonyChannelConfigSchema as unknown as never,
+    configSchema: buildChannelConfigSchema(SymphonyChannelConfigSchema),
     config: {
-      listAccountIds: (cfg: unknown) => listAccountIds(cfg as Record<string, unknown> | undefined),
-      resolveAccount: (cfg: unknown, accountId?: string | null): ResolvedSymphonyAccount => {
-        const id = accountId ?? resolveDefaultAccountId(cfg as Record<string, unknown> | undefined);
-        const account = getAccountConfig(cfg as Record<string, unknown> | undefined, id);
+      listAccountIds: (cfg: OpenClawConfig) =>
+        listAccountIds(cfg as unknown as Record<string, unknown>),
+      resolveAccount: (cfg: OpenClawConfig, accountId?: string | null): ResolvedSymphonyAccount => {
+        const id = accountId ?? resolveDefaultAccountId(cfg as unknown as Record<string, unknown>);
+        const account = getAccountConfig(cfg as unknown as Record<string, unknown>, id);
         if (!account) {
           return {
             accountId: id,
@@ -74,16 +81,16 @@ export const symphonyPlugin = createChatChannelPlugin<ResolvedSymphonyAccount>({
         }
         return { accountId: id, ...account };
       },
-      defaultAccountId: (cfg: unknown) =>
-        resolveDefaultAccountId(cfg as Record<string, unknown> | undefined),
-      isConfigured: (account: unknown) => isAccountConfigured(account as never),
-      isEnabled: (account: ResolvedSymphonyAccount | undefined) => account?.enabled !== false,
-      describeAccount: (account: ResolvedSymphonyAccount | undefined) =>
-        symphonyStatusAdapter.describeAccount(account),
+      defaultAccountId: (cfg: OpenClawConfig) =>
+        resolveDefaultAccountId(cfg as unknown as Record<string, unknown>),
+      isConfigured: (account: ResolvedSymphonyAccount) => isAccountConfigured(account),
+      isEnabled: (account: ResolvedSymphonyAccount) => account.enabled !== false,
+      describeAccount: (account: ResolvedSymphonyAccount) =>
+        describeSymphonyAccountSnapshot(account),
     },
     status: symphonyStatusAdapter,
     gateway: symphonyGatewayAdapter,
-  } as never,
+  },
   pairing: {
     idLabel: "symphonyUserId",
     normalizeAllowEntry: createPairingPrefixStripper(/^symphony:(?:user:)?/iu),
