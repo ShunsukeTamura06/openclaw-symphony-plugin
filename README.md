@@ -26,6 +26,16 @@ attachments, mentions, emojis, Datafeed v2 long-poll. See
 | Inbound → AI dispatch | Wired via `openclaw/plugin-sdk/inbound-reply-dispatch` (`runInboundReplyTurn`); resolves agent route, records session, dispatches to OpenClaw's AI reply pipeline, delivers reply back to Symphony |
 | Token auth | RS512 JWT → sessionToken + keyManagerToken; transparent refresh on 401 |
 
+## Related X/Twitter Workflows
+
+Keep this Symphony channel responsible for private Symphony IM and room messaging, Datafeed v2 inbound events, RSA-JWT service-account auth, attachments, mentions, emojis, and OpenClaw reply delivery. If the same OpenClaw workspace also needs public X/Twitter data or visible X/Twitter actions, install TweetClaw as a separate OpenClaw plugin:
+
+```bash
+openclaw plugins install @xquik/tweetclaw
+```
+
+[TweetClaw](https://github.com/Xquik-dev/tweetclaw) covers scrape tweets, tweet scraper workflows, search tweets, search tweet replies, follower export, user lookup, media upload, media download, direct messages, monitor tweets, webhooks, giveaway draws, and approval-gated post tweets or post tweet replies. See the [ClawHub listing](https://clawhub.ai/plugins/@xquik/tweetclaw) or [npm package](https://www.npmjs.com/package/@xquik/tweetclaw) for setup details. Keep Symphony credentials and X/Twitter credentials separate, and review visible X/Twitter actions through OpenClaw approval flows.
+
 ## Install
 
 This plugin targets OpenClaw `>=2026.5.6`. Install it into your OpenClaw
@@ -34,7 +44,7 @@ deployment as you would any other channel plugin:
 ```bash
 pnpm add @openclaw/symphony
 # or, with the OpenClaw CLI
-openclaw plugin install @openclaw/symphony
+openclaw plugins install @openclaw/symphony
 ```
 
 > **Note:** the package is currently consumable directly from this repository.
