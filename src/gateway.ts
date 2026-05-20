@@ -285,6 +285,27 @@ async function dispatchInboundToAi(params: {
           recordInboundSession: channelRuntime.session.recordInboundSession,
           dispatchReplyWithBufferedBlockDispatcher:
             channelRuntime.reply.dispatchReplyWithBufferedBlockDispatcher,
+          // Refs Q1 (docs/review-2026-05-20.md):
+          // updateLastRoute keeps the session's lastChannel/to metadata in
+          // sync with the channel that last delivered an inbound. The
+          // current-turn reply works without this because delivery.deliver
+          // calls sendSymphonyMessage inline, but the session metadata is
+          // what other channels / CLI / management UI consult when they
+          // later try to continue the conversation. Cost is one record
+          // write per inbound; benefit is correct cross-channel routing.
+          record: {
+            updateLastRoute: {
+              sessionKey: route.sessionKey,
+              channel: CHANNEL_ID,
+              to: normalized.streamId,
+              accountId,
+            },
+            onRecordError: (err: unknown) => {
+              log.warn?.(
+                `Failed updating Symphony session meta: ${err instanceof Error ? err.message : String(err)}`,
+              );
+            },
+          },
           delivery: {
             deliver: async (payload: ReplyPayload) => {
               const text = payload.text ?? "";
