@@ -38,14 +38,19 @@ export function normalizeInboundMessage(params: {
   if (!params.message || !params.message.messageId) {
     return null;
   }
-  if (params.selfUserId && params.message.user.id === params.selfUserId) {
+  const incomingUserId = params.message.user.userId ?? params.message.user.id;
+  if (params.selfUserId !== undefined && incomingUserId === params.selfUserId) {
     return null;
   }
   const parsed = messageMlToPlain(params.message.message ?? "");
+  const entityMentions = extractEntityMentions(params.message.data);
+  const mentions = entityMentions.length > 0 ? entityMentions : parsed.mentions;
   const sender = {
-    id: String(params.message.user.id),
+    id: String(incomingUserId ?? ""),
     ...(params.message.user.displayName ? { displayName: params.message.user.displayName } : {}),
-    ...(params.message.user.emailAddress ? { email: params.message.user.emailAddress } : {}),
+    ...(params.message.user.emailAddress ?? params.message.user.email
+      ? { email: params.message.user.emailAddress ?? params.message.user.email }
+      : {}),
     ...(params.message.user.username ? { username: params.message.user.username } : {}),
   };
   const attachments = (params.message.attachments ?? []).map((a) => ({
@@ -55,22 +60,54 @@ export function normalizeInboundMessage(params: {
     ...(a.contentType ? { contentType: a.contentType } : {}),
   }));
 
+  const streamId = params.message.stream.streamId ?? params.message.stream.id ?? "";
+  const streamTypeRaw = params.message.stream.streamType;
+  const streamType =
+    typeof streamTypeRaw === "object" && streamTypeRaw !== null
+      ? (streamTypeRaw as { type: string }).type
+      : String(streamTypeRaw ?? "");
+
   return {
     channelId: "symphony",
     accountId: params.accountId,
     messageId: params.message.messageId,
     timestamp: params.message.timestamp,
-    streamId: params.message.stream.id,
-    streamType: params.message.stream.streamType,
-    isDirect: params.message.stream.streamType === "IM",
+    streamId,
+    streamType,
+    isDirect: streamType === "IM",
     text: parsed.text,
     ...(params.message.message ? { rawMessageMl: params.message.message } : {}),
     ...(params.message.data ? { data: params.message.data } : {}),
     sender,
-    mentions: parsed.mentions,
+    mentions,
     emojis: parsed.emojis,
     attachments,
   };
+}
+
+// PresentationML v2 stores mentions in the message `data` JSON as:
+// { "0": { "type": "com.symphony.user.mention", "id": [{ "type": "com.symphony.user.userId", "value": "12345" }] } }
+function extractEntityMentions(data: string | undefined): Array<{ userId?: number; email?: string }> {
+  if (!data) return [];
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(data) as Record<string, unknown>;
+  } catch {
+    return [];
+  }
+  const result: Array<{ userId?: number; email?: string }> = [];
+  for (const entity of Object.values(parsed)) {
+    if (!entity || typeof entity !== "object") continue;
+    const e = entity as { type?: string; id?: Array<{ type?: string; value?: string }> };
+    if (e.type !== "com.symphony.user.mention") continue;
+    for (const idEntry of e.id ?? []) {
+      if (idEntry.type === "com.symphony.user.userId" && idEntry.value) {
+        const uid = Number(idEntry.value);
+        if (Number.isFinite(uid)) result.push({ userId: uid });
+      }
+    }
+  }
+  return result;
 }
 
 export function extractMessageFromEvent(

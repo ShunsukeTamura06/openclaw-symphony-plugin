@@ -129,3 +129,71 @@ export function messageMlToPlain(messageMl: string): ParsedMessageMl {
 export function extractPlainTextFromInbound(message: SymphonyMessage): string {
   return messageMlToPlain(message.message ?? "").text;
 }
+
+type SymphonyFormData = {
+  form_id?: string;
+  question?: string;
+  ui_type?: "buttons" | "radio" | "select";
+  choices?: Array<{ id?: string; label?: string; class?: string }>;
+};
+
+function buildFormMl(formData: SymphonyFormData): string {
+  const formId = formData.form_id ?? "default_form";
+  const choices = formData.choices ?? [];
+  const uiType = formData.ui_type ?? "buttons";
+
+  let ml = `<form id="${escapeXml(formId)}">`;
+  if (formData.question) {
+    ml += `<p><b>${escapeXml(formData.question)}</b></p>`;
+  }
+
+  if (uiType === "buttons") {
+    for (const c of choices) {
+      ml += `<button name="${escapeXml(c.id ?? "")}" type="action" class="${escapeXml(c.class ?? "secondary")}">${escapeXml(c.label ?? "")}</button>`;
+    }
+  } else if (uiType === "radio") {
+    for (const c of choices) {
+      ml += `<radio name="selected_option" value="${escapeXml(c.id ?? "")}">${escapeXml(c.label ?? "")}</radio>`;
+    }
+    ml += `<button name="submit" type="action" class="primary">送信</button>`;
+  } else if (uiType === "select") {
+    ml += `<select name="selected_option" data-placeholder="候補を選択">`;
+    for (const c of choices) {
+      ml += `<option value="${escapeXml(c.id ?? "")}">${escapeXml(c.label ?? "")}</option>`;
+    }
+    ml += `</select><button name="submit" type="action" class="primary">送信</button>`;
+  }
+
+  return `${ml}</form>`;
+}
+
+/**
+ * ```symphony-form {...}``` ブロックを検出し、MessageML <form> に変換して
+ * 完全な <messageML>...</messageML> 文字列を返す。
+ * ブロックが存在しない場合は plainToMessageMl の結果を返す。
+ */
+export function textWithSymphonyFormToMessageMl(text: string): string {
+  const match = /```symphony-form\s*(\{[\s\S]*?\})\s*```/u.exec(text);
+  if (!match) {
+    return plainToMessageMl({ text });
+  }
+
+  const jsonStr = match[1];
+  if (!jsonStr) {
+    return plainToMessageMl({ text });
+  }
+  let formData: SymphonyFormData;
+  try {
+    formData = JSON.parse(jsonStr) as SymphonyFormData;
+  } catch {
+    return plainToMessageMl({ text });
+  }
+
+  const formMl = buildFormMl(formData);
+  const cleanedText = text.replace(match[0], "").trim();
+  const escapedText = escapeXml(cleanedText).replace(/\r?\n/gu, "<br/>");
+
+  return escapedText
+    ? `<messageML>${escapedText}<br/>${formMl}</messageML>`
+    : `<messageML>${formMl}</messageML>`;
+}
