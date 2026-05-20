@@ -256,6 +256,15 @@ async function dispatchInboundToAi(params: {
     MessageSid: normalized.messageId,
     ChatType: peerKind,
     ConversationLabel: senderLabel,
+    // Refs Q2 (docs/review-2026-05-20.md):
+    // Sender identity fields. Without these the AI prompt referred to the
+    // speaker only via ConversationLabel, which is fragile in multi-user
+    // rooms — different users with the same displayName or unset display
+    // names would collide. SenderId is a stable identifier the agent can
+    // use to disambiguate.
+    SenderName: normalized.sender.displayName,
+    SenderId: normalized.sender.id,
+    SenderUsername: normalized.sender.username,
     CommandAuthorized: false,
   };
   const ctxPayload = channelRuntime.reply.finalizeInboundContext(baseCtx);
