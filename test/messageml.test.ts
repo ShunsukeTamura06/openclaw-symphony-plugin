@@ -79,4 +79,49 @@ describe("messageMlToPlain", () => {
     const ml = plainToMessageMl({ text: original });
     expect(messageMlToPlain(ml).text).toBe(original);
   });
+
+  it("turns </p> and </li> into newlines so paragraphs/lists stay readable", () => {
+    const xml = "<messageML><p>first</p><p>second</p><ul><li>a</li><li>b</li></ul></messageML>";
+    const text = messageMlToPlain(xml).text;
+    expect(text).toContain("first");
+    expect(text).toContain("second");
+    expect(text).toContain("a");
+    expect(text).toContain("b");
+    expect(text.split("\n").length).toBeGreaterThan(1);
+  });
+
+  it("drops anchor markup but keeps the link text (URL currently lost — known limitation)", () => {
+    const xml = '<messageML>see <a href="https://example.com">our docs</a></messageML>';
+    expect(messageMlToPlain(xml).text).toBe("see our docs");
+  });
+
+  it("strips code and pre tags but keeps their content", () => {
+    const xml = "<messageML>run <code>foo bar</code> then <pre>baz\nqux</pre></messageML>";
+    const text = messageMlToPlain(xml).text;
+    expect(text).toContain("foo bar");
+    expect(text).toContain("baz");
+    expect(text).toContain("qux");
+  });
+
+  it("strips blockquote markup but keeps text", () => {
+    const xml = "<messageML><blockquote>quoted</blockquote> reply</messageML>";
+    expect(messageMlToPlain(xml).text).toContain("quoted");
+    expect(messageMlToPlain(xml).text).toContain("reply");
+  });
+
+  it("passes Japanese text through unchanged", () => {
+    const original = "こんにちは、世界！\n改行も保つ";
+    const result = messageMlToPlain(plainToMessageMl({ text: original }));
+    expect(result.text).toBe(original);
+  });
+
+  it("returns empty string for empty body", () => {
+    expect(messageMlToPlain("<messageML></messageML>").text).toBe("");
+    expect(messageMlToPlain("").text).toBe("");
+  });
+
+  it("decodes numeric HTML entities", () => {
+    // ☃ is U+2603, decimal 9731
+    expect(messageMlToPlain("<messageML>snow: &#9731;</messageML>").text).toBe("snow: ☃");
+  });
 });

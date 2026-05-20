@@ -14,7 +14,77 @@
   },
   "configSchema": {
     "type": "object",
-    "additionalProperties": false,
-    "properties": {}
+    "additionalProperties": true,
+    "properties": {
+      "channels": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+          "symphony": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "Symphony channel configuration. Either fill in the inline fields (single account, accountId='default') or use the `accounts` map for multi-account setups.",
+            "properties": {
+              "podUrl": {
+                "type": "string",
+                "description": "Symphony Pod base URL (e.g. https://acme.symphony.com)."
+              },
+              "agentUrl": {
+                "type": "string",
+                "description": "Symphony Agent base URL (e.g. https://acme-agent.symphony.com)."
+              },
+              "relayUrl": {
+                "type": "string",
+                "description": "Optional Symphony relay URL for the key-manager pubkey endpoint. Defaults to podUrl."
+              },
+              "username": {
+                "type": "string",
+                "description": "Symphony bot service-account username."
+              },
+              "privateKeyPath": {
+                "type": "string",
+                "description": "Absolute path to the bot's RSA private key (PKCS#8 PEM)."
+              },
+              "enabled": {
+                "type": "boolean",
+                "default": true
+              },
+              "datafeedTag": {
+                "type": "string",
+                "description": "Override the Datafeed v5 tag used to find existing feeds across restarts. Defaults to openclaw-<accountId>."
+              },
+              "jwtTtlSec": {
+                "type": "number",
+                "minimum": 30,
+                "maximum": 600,
+                "description": "Override the bot JWT TTL in seconds. Default 290."
+              },
+              "defaultAccount": {
+                "type": "string",
+                "description": "Account id selected when no accountId is provided. Defaults to the first key under `accounts`, or 'default'."
+              },
+              "accounts": {
+                "type": "object",
+                "description": "Named accounts for multi-tenant deployments. Keyed by accountId.",
+                "additionalProperties": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "properties": {
+                    "podUrl": { "type": "string" },
+                    "agentUrl": { "type": "string" },
+                    "relayUrl": { "type": "string" },
+                    "username": { "type": "string" },
+                    "privateKeyPath": { "type": "string" },
+                    "enabled": { "type": "boolean" },
+                    "datafeedTag": { "type": "string" },
+                    "jwtTtlSec": { "type": "number" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
   }
 }
