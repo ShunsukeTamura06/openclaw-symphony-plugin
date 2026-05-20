@@ -25,8 +25,10 @@ export type SymphonyClientOptions = {
 };
 
 export type SymphonyUser = {
-  id: number;
+  id?: number;
+  userId?: number;
   emailAddress?: string;
+  email?: string;
   displayName?: string;
   username?: string;
   firstName?: string;
@@ -36,8 +38,9 @@ export type SymphonyUser = {
 };
 
 export type SymphonyStream = {
-  id: string;
-  streamType: SymphonyStreamType;
+  id?: string;
+  streamId?: string;
+  streamType: SymphonyStreamType | { type: SymphonyStreamType };
   crossPod?: boolean;
   origin?: string;
   active?: boolean;
