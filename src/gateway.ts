@@ -239,6 +239,11 @@ async function dispatchInboundToAi(params: {
 
   const senderLabel =
     normalized.sender.displayName ?? normalized.sender.email ?? normalized.sender.id;
+  // Direct messages are implicitly addressed to the bot. For group/room
+  // messages, we treat any mention as evidence the message is directed at
+  // the bot (upstream group policy decides whether this is the *correct*
+  // bot — Symphony rooms typically enforce that already).
+  const wasMentioned = normalized.isDirect || normalized.mentions.length > 0;
   const baseCtx = {
     Body: normalized.text,
     BodyForAgent: normalized.text,
@@ -249,7 +254,17 @@ async function dispatchInboundToAi(params: {
     MessageSid: normalized.messageId,
     ChatType: peerKind,
     ConversationLabel: senderLabel,
+    SenderName: normalized.sender.displayName,
+    SenderId: normalized.sender.id,
+    SenderUsername: normalized.sender.username,
+    WasMentioned: wasMentioned,
+    Provider: CHANNEL_ID,
+    Surface: CHANNEL_ID,
+    OriginatingChannel: CHANNEL_ID,
+    OriginatingTo: normalized.streamId,
+    Timestamp: normalized.timestamp,
     CommandAuthorized: false,
+    CommandSource: "text" as const,
   };
   const ctxPayload = channelRuntime.reply.finalizeInboundContext(baseCtx);
 
@@ -278,18 +293,42 @@ async function dispatchInboundToAi(params: {
           recordInboundSession: channelRuntime.session.recordInboundSession,
           dispatchReplyWithBufferedBlockDispatcher:
             channelRuntime.reply.dispatchReplyWithBufferedBlockDispatcher,
+          // updateLastRoute is what tells OpenClaw "the last inbound on this
+          // session came from channel=symphony at to=<streamId>". Without it,
+          // the AI reply has no routing target and falls back to the
+          // management-UI session transcript instead of being sent back to
+          // Symphony.
+          record: {
+            updateLastRoute: {
+              sessionKey: route.sessionKey,
+              channel: CHANNEL_ID,
+              to: normalized.streamId,
+              accountId,
+            },
+            onRecordError: (err: unknown) => {
+              log.warn?.(
+                `Failed updating Symphony session meta: ${err instanceof Error ? err.message : String(err)}`,
+              );
+            },
+          },
           delivery: {
-            deliver: async (payload: ReplyPayload) => {
+            deliver: async (payload: ReplyPayload, info: { kind: string }) => {
               const text = payload.text ?? "";
+              log.info(
+                `Symphony delivery.deliver invoked (kind=${info.kind}, textLen=${text.length}, hasMedia=${Boolean(payload.mediaUrl)})`,
+              );
               if (!text && !payload.mediaUrl) {
                 return;
               }
-              await sendSymphonyMessage({
+              const result = await sendSymphonyMessage({
                 cfg,
                 accountId,
                 streamId: normalized.streamId,
                 options: { text },
               });
+              log.info(
+                `Symphony reply (${info.kind}) sent to ${normalized.streamId} as ${result.messageId}`,
+              );
             },
             onError: (err: unknown, info: { kind: string }) => {
               log.error(
