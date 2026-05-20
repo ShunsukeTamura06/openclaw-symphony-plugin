@@ -328,6 +328,10 @@ async function dispatchInboundToAi(params: {
                 streamId: normalized.streamId,
                 options: { messageMl },
               });
+              // Refs Q3 (docs/review-2026-05-20.md): one info line per
+              // successful delivery so operators can answer "did the
+              // reply leave OpenClaw?" without enabling debug logging.
+              log.info(`Symphony reply sent: ${sent.messageId} -> ${normalized.streamId}`);
               // Pre-mark the sent message ID so the Datafeed echo is silently ignored.
               const sentKey = buildSymphonyDedupeKey({
                 accountId,
