@@ -5,13 +5,15 @@ import type {
 } from "openclaw/plugin-sdk/channel-contract";
 import { runInboundReplyTurn } from "openclaw/plugin-sdk/inbound-reply-dispatch";
 import type { ReplyPayload } from "openclaw/plugin-sdk/reply-payload";
+import { buildSymphonyDedupeKey, MessageDedupeStore } from "./dedupe.js";
+import { InboundQueue } from "./inbound-queue.js";
 import { sendSymphonyMessage } from "./outbound.js";
 import {
   extractMessageFromEvent,
   normalizeInboundMessage,
   type NormalizedInboundMessage,
 } from "./normalize.js";
-import { getOrCreateClient, getSymphonyRuntime } from "./runtime.js";
+import { disposeClient, getOrCreateClient, getSymphonyRuntime } from "./runtime.js";
 import { runDatafeedLoop } from "./symphony/datafeed-loop.js";
 import { CHANNEL_ID, type ResolvedSymphonyAccount } from "./types.js";
 
@@ -52,6 +54,19 @@ type FullChannelRuntime = {
 };
 
 export type SymphonyGatewayContext = ChannelGatewayContext<ResolvedSymphonyAccount>;
+
+// Module-level singletons. The queue + dedupe live for the lifetime of the
+// host process; both `accountId` and `streamId` are part of the keys so
+// multiple accounts coexist safely without cross-talk.
+const inboundQueue = new InboundQueue({
+  onError: (err, job) =>
+    getSymphonyRuntime().error(
+      `inbound job ${job.accountId}/${job.streamId}/${job.messageId} failed: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    ),
+});
+const dedupeStore = new MessageDedupeStore();
 
 export const symphonyGatewayAdapter = {
   async startAccount(ctx: SymphonyGatewayContext): Promise<void> {
@@ -104,33 +119,33 @@ export const symphonyGatewayAdapter = {
       handlers: {
         onLog: (m) => log.info(m),
         onError: (e) => log.error(e instanceof Error ? e.message : String(e)),
-        onEvent: async (envelope) => {
-          const message = extractMessageFromEvent(envelope);
-          if (!message) {
-            return;
-          }
-          const normalized = normalizeInboundMessage({
-            message,
-            accountId: ctx.accountId,
-            ...(selfUserId !== undefined ? { selfUserId } : {}),
-          });
-          if (!normalized) {
-            return;
-          }
-          await dispatchInboundToAi({
+        onEvent: (envelope) =>
+          handleInboundEnvelope({
+            envelope,
             cfg: ctx.cfg,
             accountId: ctx.accountId,
-            normalized,
+            ...(selfUserId !== undefined ? { selfUserId } : {}),
             channelRuntime,
             log,
-          });
-        },
+            queue: inboundQueue,
+            dedupe: dedupeStore,
+          }),
       },
     });
   },
 
   async stopAccount(ctx: SymphonyGatewayContext): Promise<void> {
     const log = adoptLog(ctx.log);
+    // The Datafeed read loop is owned by `startAccount` and stops on its own
+    // when OpenClaw aborts ctx.abortSignal. We additionally:
+    //   1. drain in-flight inbound jobs so we don't leave AI replies mid-stream
+    //   2. dispose the cached HTTP client so tokens/keys don't sit in memory
+    try {
+      await inboundQueue.drain();
+    } catch (err) {
+      log.warn(`inbound queue drain reported: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    disposeClient(ctx.accountId, ctx.account);
     ctx.setStatus({
       accountId: ctx.accountId,
       running: false,
@@ -139,6 +154,63 @@ export const symphonyGatewayAdapter = {
     log.info(`Stopped Symphony datafeed for ${ctx.account.username}`);
   },
 };
+
+/**
+ * Pure-ish helper that processes one Datafeed envelope:
+ *   1. extract MESSAGESENT payload (drop other event kinds)
+ *   2. normalize + filter self-message
+ *   3. dedupe by `accountId:streamId:messageId`
+ *   4. enqueue the AI dispatch on the per-stream serial queue
+ *
+ * Returns synchronously — does NOT wait for AI dispatch.
+ * Exported so unit tests can exercise it without spinning up a datafeed loop.
+ */
+export function handleInboundEnvelope(params: {
+  envelope: Parameters<NonNullable<Parameters<typeof runDatafeedLoop>[0]["handlers"]["onEvent"]>>[0];
+  cfg: OpenClawConfig;
+  accountId: string;
+  selfUserId?: number;
+  channelRuntime: FullChannelRuntime | undefined;
+  log: ChannelLogSink;
+  queue: InboundQueue;
+  dedupe: MessageDedupeStore;
+}): void {
+  const message = extractMessageFromEvent(params.envelope);
+  if (!message) {
+    return;
+  }
+  const normalized = normalizeInboundMessage({
+    message,
+    accountId: params.accountId,
+    ...(params.selfUserId !== undefined ? { selfUserId: params.selfUserId } : {}),
+  });
+  if (!normalized) {
+    return;
+  }
+  const dedupeKey = buildSymphonyDedupeKey({
+    accountId: params.accountId,
+    streamId: normalized.streamId,
+    messageId: normalized.messageId,
+  });
+  if (!params.dedupe.markIfNew(dedupeKey)) {
+    params.log.info(`duplicate Symphony message skipped: ${dedupeKey}`);
+    return;
+  }
+  params.queue.enqueue({
+    accountId: params.accountId,
+    streamId: normalized.streamId,
+    messageId: normalized.messageId,
+    run: async () => {
+      await dispatchInboundToAi({
+        cfg: params.cfg,
+        accountId: params.accountId,
+        normalized,
+        channelRuntime: params.channelRuntime,
+        log: params.log,
+      });
+    },
+  });
+}
 
 async function dispatchInboundToAi(params: {
   cfg: OpenClawConfig;
