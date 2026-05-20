@@ -73,7 +73,7 @@ describe("extractEntityMentions (via normalizeInboundMessage)", () => {
     expect(normalized?.mentions).toEqual([]);
   });
 
-  it("skips entries whose id-type is not com.symphony.user.userId", () => {
+  it("harvests both userId and email mentions side-by-side (Q6)", () => {
     const data = JSON.stringify({
       "0": {
         type: "com.symphony.user.mention",
@@ -87,8 +87,21 @@ describe("extractEntityMentions (via normalizeInboundMessage)", () => {
       message: makeMessageWithData(data),
       accountId: "acc",
     });
-    // Only userId is harvested today (see Q6 for proposed email mention support)
-    expect(normalized?.mentions).toEqual([{ userId: 555 }]);
+    expect(normalized?.mentions).toEqual([{ userId: 555 }, { email: "x@y.com" }]);
+  });
+
+  it("supports email-only mentions for external users not in the pod (Q6)", () => {
+    const data = JSON.stringify({
+      "0": {
+        type: "com.symphony.user.mention",
+        id: [{ type: "com.symphony.user.emailAddress", value: "external@example.com" }],
+      },
+    });
+    const normalized = normalizeInboundMessage({
+      message: makeMessageWithData(data),
+      accountId: "acc",
+    });
+    expect(normalized?.mentions).toEqual([{ email: "external@example.com" }]);
   });
 
   it("drops mention entries whose value is not a finite number", () => {

@@ -101,9 +101,16 @@ function extractEntityMentions(data: string | undefined): Array<{ userId?: numbe
     const e = entity as { type?: string; id?: Array<{ type?: string; value?: string }> };
     if (e.type !== "com.symphony.user.mention") continue;
     for (const idEntry of e.id ?? []) {
-      if (idEntry.type === "com.symphony.user.userId" && idEntry.value) {
+      if (!idEntry.value) continue;
+      // Refs Q6 (docs/review-2026-05-20.md): Symphony entity JSON can
+      // reference a mentioned user either by internal userId or — for
+      // external users not yet onboarded with a userId in the pod — by
+      // email address. Pick up both shapes.
+      if (idEntry.type === "com.symphony.user.userId") {
         const uid = Number(idEntry.value);
         if (Number.isFinite(uid)) result.push({ userId: uid });
+      } else if (idEntry.type === "com.symphony.user.emailAddress") {
+        result.push({ email: idEntry.value });
       }
     }
   }
