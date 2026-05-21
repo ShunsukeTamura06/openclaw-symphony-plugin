@@ -43,8 +43,12 @@ describe("inline emphasis", () => {
   it("_italic_ -> <i>", () => {
     expect(markdownToMessageMlBody("_hi_")).toBe("<p><i>hi</i></p>");
   });
-  it("~~strike~~ -> <strike>", () => {
-    expect(markdownToMessageMlBody("~~hi~~")).toBe("<p><strike>hi</strike></p>");
+  it("~~strike~~ degrades to plain text (Symphony has no strikethrough tag)", () => {
+    const out = markdownToMessageMlBody("~~hi~~");
+    expect(out).toBe("<p>hi</p>");
+    expect(out).not.toContain("<strike");
+    expect(out).not.toContain("<s>");
+    expect(out).not.toContain("<del");
   });
 });
 
@@ -109,10 +113,17 @@ describe("lists", () => {
 });
 
 describe("blockquote / hr / link / image", () => {
-  it("> quoted text -> <blockquote>…</blockquote>", () => {
-    expect(markdownToMessageMlBody("> hello")).toContain(
-      "<blockquote><p>hello</p></blockquote>",
-    );
+  it("> quoted text degrades to its inner content (Symphony has no <blockquote>)", () => {
+    const out = markdownToMessageMlBody("> hello");
+    expect(out).toContain("<p>hello</p>");
+    expect(out).not.toContain("<blockquote");
+  });
+
+  it("multi-paragraph blockquote preserves all paragraphs without wrapper", () => {
+    const out = markdownToMessageMlBody("> first\n>\n> second");
+    expect(out).toContain("<p>first</p>");
+    expect(out).toContain("<p>second</p>");
+    expect(out).not.toContain("<blockquote");
   });
 
   it("--- on its own line -> <hr/>", () => {
@@ -135,21 +146,69 @@ describe("blockquote / hr / link / image", () => {
 });
 
 describe("tables (GFM)", () => {
-  it("renders a header + body table", () => {
+  it("renders a header + body table using <td> in thead (Symphony does NOT support <th>)", () => {
     const md = "| A | B |\n| --- | --- |\n| 1 | 2 |\n| 3 | 4 |";
     const out = markdownToMessageMlBody(md);
     expect(out).toContain("<table>");
-    expect(out).toContain("<thead><tr><th>A</th><th>B</th></tr></thead>");
+    // thead cells use <td><b>...</b></td>, never <th>
+    expect(out).toContain("<thead><tr><td><b>A</b></td><td><b>B</b></td></tr></thead>");
+    expect(out).not.toContain("<th>");
+    expect(out).not.toContain("<th ");
     expect(out).toContain("<tbody>");
     expect(out).toContain("<tr><td>1</td><td>2</td></tr>");
     expect(out).toContain("<tr><td>3</td><td>4</td></tr>");
     expect(out).toContain("</table>");
   });
 
-  it("inline markup inside cells is converted", () => {
+  it("inline markup inside body cells is converted", () => {
     const md = "| col |\n| --- |\n| **bold** |";
     const out = markdownToMessageMlBody(md);
     expect(out).toContain("<td><b>bold</b></td>");
+  });
+});
+
+describe("task lists (GFM checkboxes)", () => {
+  it("unchecked task -> [ ] prefix inside <li> (Symphony <checkbox> is form-only)", () => {
+    const out = markdownToMessageMlBody("- [ ] todo");
+    expect(out).toMatch(/<li>\[ \]\s*(?:<p>)?todo/);
+    expect(out).not.toContain("<input");
+    expect(out).not.toContain("<checkbox");
+  });
+
+  it("checked task -> [x] prefix inside <li>", () => {
+    const out = markdownToMessageMlBody("- [x] done");
+    expect(out).toMatch(/<li>\[x\]\s*(?:<p>)?done/);
+    expect(out).not.toContain("<input");
+  });
+});
+
+describe("disallowed-tag guard", () => {
+  it("never emits Symphony-unsupported tags", () => {
+    const md = [
+      "> quote",
+      "",
+      "~~strike~~",
+      "",
+      "| A |",
+      "| - |",
+      "| 1 |",
+    ].join("\n");
+    const out = markdownToMessageMlBody(md);
+    // Use word-boundary-aware patterns so "<thead>" is not mis-matched as "<th>"
+    const bannedPatterns: Array<[RegExp, string]> = [
+      [/<\/?blockquote\b/u, "blockquote"],
+      [/<\/?strike\b/u, "strike"],
+      [/<\/?s>/u, "s (strikethrough)"],
+      [/<\/?del\b/u, "del"],
+      [/<\/?ins\b/u, "ins"],
+      [/<\/?u>/u, "u (underline)"],
+      [/<\/?th[\s>]/u, "th (table header cell)"],
+      [/<\/?em\b/u, "em"],
+      [/<\/?strong\b/u, "strong"],
+    ];
+    for (const [pattern, label] of bannedPatterns) {
+      expect(out, `output should not contain ${label}`).not.toMatch(pattern);
+    }
   });
 });
 
