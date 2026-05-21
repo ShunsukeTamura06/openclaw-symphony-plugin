@@ -28,11 +28,95 @@
  * separately encourages the AI to emit MessageML natively for things the
  * converter cannot fully express (mentions, emoji, interactive forms).
  */
-import { Marked, type RendererObject, type Tokens } from "marked";
+import { Marked, type RendererObject, type Token, type Tokens } from "marked";
 import { escapeXml } from "./messageml.js";
 
 function escapeAttr(value: string): string {
   return escapeXml(value);
+}
+
+/**
+ * Symphony's <a href="..."> doc lists "URL" without enumerating schemes.
+ * We allow only http(s), mailto, and tel: in line with what the Symphony
+ * client renders sensibly, and reject the common XSS / silent-reject
+ * carriers (javascript:, data:, blob:, file:, vbscript:). Unknown schemes
+ * are rejected too — safer to display the bare text than to risk Symphony
+ * rejecting the entire message.
+ */
+function isAllowedHref(href: string | undefined): href is string {
+  if (!href) return false;
+  const trimmed = href.trim();
+  if (!trimmed) return false;
+  // Allow relative URLs (start with /, #, or ?). Most chat clients ignore
+  // these but they aren't dangerous.
+  if (/^[/#?]/u.test(trimmed)) return true;
+  // Otherwise require an allowlisted scheme.
+  return /^(?:https?:\/\/|mailto:|tel:)/iu.test(trimmed);
+}
+
+type MarkedParser = {
+  parse: (tokens: Tokens.Generic[] | Token[]) => string;
+  parseInline: (tokens: Token[] | Tokens.Generic[]) => string;
+};
+
+/**
+ * Render a single list item to MessageML, never wrapping content in `<p>`.
+ *
+ * Why this matters: Symphony's MessageML doc explicitly lists what `<li>`
+ * can contain ("inline and block content") but does NOT confirm `<p>` is
+ * permitted there. Some pods reject the whole message. marked's default
+ * behavior for "loose" lists wraps each text token in `<p>` — we must
+ * route around that.
+ *
+ * Token shape (verified empirically against marked 15.x):
+ *   - Tight item (no blank line):   item.loose=false, tokens=[Text]
+ *   - Loose item w/ multi-para:     item.loose=true,  tokens=[Text, Space, Text, ...]
+ *   - Nested list inside item:      item.loose=true,  tokens=[Text, Space, List]
+ *   - Code block inside item:       item.loose=true,  tokens=[Text, Space, Code]
+ *
+ * Strategy: walk item.tokens. Render each `text` token as inline content
+ * (no `<p>` wrapper). For loose items with multiple inline-text segments,
+ * separate them with `<br/>`. For block-level children (list, code,
+ * blockquote), call the regular block parser. Space tokens are dropped.
+ */
+function renderListItem(parser: MarkedParser, item: Tokens.ListItem): string {
+  const taskPrefix = item.task ? (item.checked ? "[x] " : "[ ] ") : "";
+  let inner = "";
+  let prevWasInlineText = false;
+  for (const token of item.tokens) {
+    const type = (token as { type: string }).type;
+    if (type === "text") {
+      if (item.loose && prevWasInlineText) {
+        inner += "<br/>";
+      }
+      const text = token as Tokens.Text;
+      if (text.tokens) {
+        inner += parser.parseInline(text.tokens);
+      } else {
+        inner += escapeXml(text.text);
+      }
+      prevWasInlineText = true;
+    } else if (type === "space") {
+      // Source-level whitespace between tokens — discard. The <br/> insertion
+      // between inline-text segments is handled above when the *next* inline
+      // text fires.
+      continue;
+    } else if (type === "paragraph") {
+      // Some markdown shapes (e.g., loose lists nested in blockquotes) do
+      // produce paragraph tokens at list-item level. Treat them like text:
+      // unwrap to inline, no <p>.
+      if (item.loose && prevWasInlineText) {
+        inner += "<br/>";
+      }
+      inner += parser.parseInline((token as Tokens.Paragraph).tokens);
+      prevWasInlineText = true;
+    } else {
+      // Block-level child (list, code, hr, table, etc.) — render normally.
+      inner += parser.parse([token as Tokens.Generic]);
+      prevWasInlineText = false;
+    }
+  }
+  return `<li>${taskPrefix}${inner}</li>`;
 }
 
 const renderer: RendererObject = {
@@ -77,11 +161,17 @@ const renderer: RendererObject = {
   br() {
     return `<br/>`;
   },
-  link({ href, tokens, title }: Tokens.Link) {
+  link({ href, tokens }: Tokens.Link) {
     const inner = this.parser.parseInline(tokens);
-    const safeHref = escapeAttr(href ?? "");
-    const titleAttr = title ? ` title="${escapeAttr(title)}"` : "";
-    return `<a href="${safeHref}"${titleAttr}>${inner}</a>`;
+    // Symphony's <a> spec lists only `href` and `class`. `title` is NOT
+    // documented and may cause MessageML rejection — drop it.
+    // Also validate the scheme: javascript: / data: / blob: are XSS vectors;
+    // unknown schemes risk silent server-side rejection. When unsafe, emit
+    // the visible text only (preserve content, drop the link).
+    if (!isAllowedHref(href)) {
+      return inner;
+    }
+    return `<a href="${escapeAttr(href)}">${inner}</a>`;
   },
   image({ text, title, href }: Tokens.Image) {
     // Symphony does not render inline Markdown-style images (`![alt](url)`).
@@ -96,18 +186,14 @@ const renderer: RendererObject = {
       ordered && typeof start === "number" && start !== 1 ? ` start="${start}"` : "";
     let body = "";
     for (const item of items) {
-      // GFM task-list items: prepend a plain-text marker since Symphony
-      // <checkbox> is a form element, not a display element.
-      const taskPrefix = item.task ? (item.checked ? "[x] " : "[ ] ") : "";
-      body += `<li>${taskPrefix}${this.parser.parse(item.tokens)}</li>`;
+      body += renderListItem(this.parser, item);
     }
     return `<${tag}${startAttr}>${body}</${tag}>`;
   },
   listitem(item: Tokens.ListItem) {
     // Usually unreachable (the `list` renderer composes items inline) but
-    // kept as a safety net mirroring the same task-marker logic.
-    const taskPrefix = item.task ? (item.checked ? "[x] " : "[ ] ") : "";
-    return `<li>${taskPrefix}${this.parser.parse(item.tokens)}</li>`;
+    // kept as a safety net mirroring the same paragraph-flattening logic.
+    return renderListItem(this.parser, item);
   },
   /**
    * Symphony does NOT support <th>. Even for thead cells we must emit <td>.

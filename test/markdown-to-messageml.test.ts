@@ -110,6 +110,37 @@ describe("lists", () => {
     const innerUlOpen = out.indexOf("<ul>", liChildOpen + 1);
     expect(innerUlOpen).toBeGreaterThan(0);
   });
+
+  it("loose list items do NOT wrap content in <p> (Symphony's <li> spec is ambiguous about <p>)", () => {
+    // Loose list = blank line between items; marked normally wraps each
+    // item content in <p>. We flatten to inline to avoid <p> inside <li>.
+    const md = "- first\n\n- second";
+    const out = markdownToMessageMlBody(md);
+    expect(out).toMatch(/<ul><li>first<\/li><li>second<\/li><\/ul>/u);
+    // No <p> inside any <li>
+    expect(out).not.toMatch(/<li[^>]*>\s*<p/u);
+  });
+
+  it("multi-paragraph list item joins paragraphs with <br/> (no <p> wrapper)", () => {
+    const md = "- line one\n\n  line two\n- next item";
+    const out = markdownToMessageMlBody(md);
+    // The first item has two paragraphs; they should be joined by <br/>
+    expect(out).toContain("<li>line one<br/>line two</li>");
+    expect(out).not.toMatch(/<li[^>]*>\s*<p/u);
+  });
+
+  it("nested list inside a list item still works", () => {
+    const md = "- parent\n\n  - child1\n  - child2";
+    const out = markdownToMessageMlBody(md);
+    expect(out).toMatch(/<ul><li>parent<ul><li>child1<\/li><li>child2<\/li><\/ul><\/li><\/ul>/u);
+  });
+
+  it("code block inside a list item is preserved", () => {
+    const md = "- before\n\n  ```\n  some code\n  ```\n- after";
+    const out = markdownToMessageMlBody(md);
+    expect(out).toContain("<pre>some code</pre>");
+    expect(out).not.toMatch(/<li[^>]*>\s*<p/u);
+  });
 });
 
 describe("blockquote / hr / link / image", () => {
@@ -135,6 +166,33 @@ describe("blockquote / hr / link / image", () => {
     expect(out).toContain(
       '<a href="https://example.com/?q=a&amp;b">docs</a>',
     );
+  });
+
+  it("never emits the title attribute (not in Symphony's <a> spec)", () => {
+    const out = markdownToMessageMlBody('[click](https://example.com "tooltip text")');
+    expect(out).not.toContain("title=");
+    expect(out).toContain("<a href=\"https://example.com\">click</a>");
+  });
+
+  it("rejects javascript: URLs — emits visible text only, no <a>", () => {
+    const out = markdownToMessageMlBody("[click me](javascript:alert(1))");
+    expect(out).toContain("click me");
+    expect(out).not.toContain("<a ");
+    expect(out).not.toContain("javascript:");
+  });
+
+  it("rejects data: URLs", () => {
+    const out = markdownToMessageMlBody("[click](data:text/html,<script>alert(1)</script>)");
+    expect(out).toContain("click");
+    expect(out).not.toContain("<a ");
+    expect(out).not.toContain("data:");
+  });
+
+  it("allows mailto: and tel: URLs", () => {
+    const m = markdownToMessageMlBody("[email](mailto:a@b.com)");
+    expect(m).toContain('<a href="mailto:a@b.com">email</a>');
+    const t = markdownToMessageMlBody("[call](tel:+81-3-0000-0000)");
+    expect(t).toContain('<a href="tel:+81-3-0000-0000">call</a>');
   });
 
   it("![alt](url) falls back to alt text (Symphony has no inline images)", () => {
