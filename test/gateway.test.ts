@@ -172,6 +172,103 @@ describe("handleInboundEnvelope", () => {
 
     expect(enqueueSpy).toHaveBeenCalledTimes(2);
   });
+
+  // Refs Q4 (docs/review-2026-05-20.md) — early mention filter
+  describe("early group mention filter", () => {
+    const SELF_UID = 7777;
+
+    function makeRoomMessage(mentions: Array<{ userId: number }>): SymphonyMessage {
+      return {
+        messageId: "room-msg",
+        timestamp: 1,
+        message: "<messageML>hi room</messageML>",
+        user: { userId: 100, displayName: "Alice" },
+        stream: { streamId: "room-A", streamType: "ROOM" },
+        data:
+          mentions.length > 0
+            ? JSON.stringify(
+                Object.fromEntries(
+                  mentions.map((m, i) => [
+                    String(i),
+                    {
+                      type: "com.symphony.user.mention",
+                      id: [{ type: "com.symphony.user.userId", value: String(m.userId) }],
+                    },
+                  ]),
+                ),
+              )
+            : undefined,
+      };
+    }
+
+    it("drops a room message that does not @-mention the bot", () => {
+      const queue = new InboundQueue();
+      const dedupe = new MessageDedupeStore();
+      const enqueueSpy = vi.spyOn(queue, "enqueue").mockImplementation(() => undefined);
+      handleInboundEnvelope({
+        envelope: makeMessageSentEnvelope(makeRoomMessage([])),
+        cfg: {} as never,
+        accountId: "acc",
+        selfUserId: SELF_UID,
+        channelRuntime: undefined,
+        log: silentLog,
+        queue,
+        dedupe,
+      });
+      expect(enqueueSpy).not.toHaveBeenCalled();
+    });
+
+    it("drops a room message whose mentions target another user, not the bot", () => {
+      const queue = new InboundQueue();
+      const dedupe = new MessageDedupeStore();
+      const enqueueSpy = vi.spyOn(queue, "enqueue").mockImplementation(() => undefined);
+      handleInboundEnvelope({
+        envelope: makeMessageSentEnvelope(makeRoomMessage([{ userId: 999 }])),
+        cfg: {} as never,
+        accountId: "acc",
+        selfUserId: SELF_UID,
+        channelRuntime: undefined,
+        log: silentLog,
+        queue,
+        dedupe,
+      });
+      expect(enqueueSpy).not.toHaveBeenCalled();
+    });
+
+    it("accepts a room message that @-mentions the bot", () => {
+      const queue = new InboundQueue();
+      const dedupe = new MessageDedupeStore();
+      const enqueueSpy = vi.spyOn(queue, "enqueue").mockImplementation(() => undefined);
+      handleInboundEnvelope({
+        envelope: makeMessageSentEnvelope(makeRoomMessage([{ userId: SELF_UID }])),
+        cfg: {} as never,
+        accountId: "acc",
+        selfUserId: SELF_UID,
+        channelRuntime: undefined,
+        log: silentLog,
+        queue,
+        dedupe,
+      });
+      expect(enqueueSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not apply the mention filter to direct messages", () => {
+      const queue = new InboundQueue();
+      const dedupe = new MessageDedupeStore();
+      const enqueueSpy = vi.spyOn(queue, "enqueue").mockImplementation(() => undefined);
+      handleInboundEnvelope({
+        envelope: makeMessageSentEnvelope(makeSymphonyMessage()),
+        cfg: {} as never,
+        accountId: "acc",
+        selfUserId: SELF_UID,
+        channelRuntime: undefined,
+        log: silentLog,
+        queue,
+        dedupe,
+      });
+      expect(enqueueSpy).toHaveBeenCalledTimes(1);
+    });
+  });
 });
 
 function makeDeferred(): { promise: Promise<void>; resolve: () => void } {

@@ -10,9 +10,11 @@ import { InboundQueue } from "./inbound-queue.js";
 import { sendSymphonyMessage } from "./outbound.js";
 import {
   extractMessageFromEvent,
+  normalizeElementsAction,
   normalizeInboundMessage,
   type NormalizedInboundMessage,
 } from "./normalize.js";
+import { textWithSymphonyFormToMessageMl } from "./messageml.js";
 import { disposeClient, getOrCreateClient, getSymphonyRuntime } from "./runtime.js";
 import { runDatafeedLoop } from "./symphony/datafeed-loop.js";
 import { CHANNEL_ID, type ResolvedSymphonyAccount } from "./types.js";
@@ -125,6 +127,7 @@ export const symphonyGatewayAdapter = {
             cfg: ctx.cfg,
             accountId: ctx.accountId,
             ...(selfUserId !== undefined ? { selfUserId } : {}),
+            ...(ctx.account.allowedUsers ? { allowedUsers: ctx.account.allowedUsers } : {}),
             channelRuntime,
             log,
             queue: inboundQueue,
@@ -170,22 +173,46 @@ export function handleInboundEnvelope(params: {
   cfg: OpenClawConfig;
   accountId: string;
   selfUserId?: number;
+  allowedUsers?: string[];
   channelRuntime: FullChannelRuntime | undefined;
   log: ChannelLogSink;
   queue: InboundQueue;
   dedupe: MessageDedupeStore;
 }): void {
   const message = extractMessageFromEvent(params.envelope);
-  if (!message) {
-    return;
+  const isElementsAction = !message && params.envelope.type === "SYMPHONYELEMENTSACTION";
+
+  let normalized: NormalizedInboundMessage | null = null;
+  if (message) {
+    normalized = normalizeInboundMessage({
+      message,
+      accountId: params.accountId,
+      ...(params.selfUserId !== undefined ? { selfUserId: params.selfUserId } : {}),
+    });
+  } else if (isElementsAction) {
+    normalized = normalizeElementsAction({
+      envelope: params.envelope,
+      accountId: params.accountId,
+      ...(params.selfUserId !== undefined ? { selfUserId: params.selfUserId } : {}),
+    });
   }
-  const normalized = normalizeInboundMessage({
-    message,
-    accountId: params.accountId,
-    ...(params.selfUserId !== undefined ? { selfUserId: params.selfUserId } : {}),
-  });
   if (!normalized) {
     return;
+  }
+  if (params.allowedUsers && params.allowedUsers.length > 0) {
+    if (!isSenderAllowed(normalized.sender, params.allowedUsers)) {
+      params.log.info(
+        `Symphony message ignored: sender ${normalized.sender.id} not in allowedUsers`,
+      );
+      return;
+    }
+  }
+  // @mention required in group rooms for regular messages, but not for form submissions
+  if (!isElementsAction && !normalized.isDirect && params.selfUserId !== undefined) {
+    const isMentioned = normalized.mentions.some((m) => m.userId === params.selfUserId);
+    if (!isMentioned) {
+      return;
+    }
   }
   const dedupeKey = buildSymphonyDedupeKey({
     accountId: params.accountId,
@@ -239,11 +266,6 @@ async function dispatchInboundToAi(params: {
 
   const senderLabel =
     normalized.sender.displayName ?? normalized.sender.email ?? normalized.sender.id;
-  // Direct messages are implicitly addressed to the bot. For group/room
-  // messages, we treat any mention as evidence the message is directed at
-  // the bot (upstream group policy decides whether this is the *correct*
-  // bot — Symphony rooms typically enforce that already).
-  const wasMentioned = normalized.isDirect || normalized.mentions.length > 0;
   const baseCtx = {
     Body: normalized.text,
     BodyForAgent: normalized.text,
@@ -254,17 +276,16 @@ async function dispatchInboundToAi(params: {
     MessageSid: normalized.messageId,
     ChatType: peerKind,
     ConversationLabel: senderLabel,
+    // Refs Q2 (docs/review-2026-05-20.md):
+    // Sender identity fields. Without these the AI prompt referred to the
+    // speaker only via ConversationLabel, which is fragile in multi-user
+    // rooms — different users with the same displayName or unset display
+    // names would collide. SenderId is a stable identifier the agent can
+    // use to disambiguate.
     SenderName: normalized.sender.displayName,
     SenderId: normalized.sender.id,
     SenderUsername: normalized.sender.username,
-    WasMentioned: wasMentioned,
-    Provider: CHANNEL_ID,
-    Surface: CHANNEL_ID,
-    OriginatingChannel: CHANNEL_ID,
-    OriginatingTo: normalized.streamId,
-    Timestamp: normalized.timestamp,
     CommandAuthorized: false,
-    CommandSource: "text" as const,
   };
   const ctxPayload = channelRuntime.reply.finalizeInboundContext(baseCtx);
 
@@ -293,11 +314,14 @@ async function dispatchInboundToAi(params: {
           recordInboundSession: channelRuntime.session.recordInboundSession,
           dispatchReplyWithBufferedBlockDispatcher:
             channelRuntime.reply.dispatchReplyWithBufferedBlockDispatcher,
-          // updateLastRoute is what tells OpenClaw "the last inbound on this
-          // session came from channel=symphony at to=<streamId>". Without it,
-          // the AI reply has no routing target and falls back to the
-          // management-UI session transcript instead of being sent back to
-          // Symphony.
+          // Refs Q1 (docs/review-2026-05-20.md):
+          // updateLastRoute keeps the session's lastChannel/to metadata in
+          // sync with the channel that last delivered an inbound. The
+          // current-turn reply works without this because delivery.deliver
+          // calls sendSymphonyMessage inline, but the session metadata is
+          // what other channels / CLI / management UI consult when they
+          // later try to continue the conversation. Cost is one record
+          // write per inbound; benefit is correct cross-channel routing.
           record: {
             updateLastRoute: {
               sessionKey: route.sessionKey,
@@ -312,23 +336,29 @@ async function dispatchInboundToAi(params: {
             },
           },
           delivery: {
-            deliver: async (payload: ReplyPayload, info: { kind: string }) => {
+            deliver: async (payload: ReplyPayload) => {
               const text = payload.text ?? "";
-              log.info(
-                `Symphony delivery.deliver invoked (kind=${info.kind}, textLen=${text.length}, hasMedia=${Boolean(payload.mediaUrl)})`,
-              );
               if (!text && !payload.mediaUrl) {
                 return;
               }
-              const result = await sendSymphonyMessage({
+              const messageMl = textWithSymphonyFormToMessageMl(text);
+              const sent = await sendSymphonyMessage({
                 cfg,
                 accountId,
                 streamId: normalized.streamId,
-                options: { text },
+                options: { messageMl },
               });
-              log.info(
-                `Symphony reply (${info.kind}) sent to ${normalized.streamId} as ${result.messageId}`,
-              );
+              // Refs Q3 (docs/review-2026-05-20.md): one info line per
+              // successful delivery so operators can answer "did the
+              // reply leave OpenClaw?" without enabling debug logging.
+              log.info(`Symphony reply sent: ${sent.messageId} -> ${normalized.streamId}`);
+              // Pre-mark the sent message ID so the Datafeed echo is silently ignored.
+              const sentKey = buildSymphonyDedupeKey({
+                accountId,
+                streamId: normalized.streamId,
+                messageId: sent.messageId,
+              });
+              dedupeStore.mark(sentKey);
             },
             onError: (err: unknown, info: { kind: string }) => {
               log.error(
@@ -343,6 +373,18 @@ async function dispatchInboundToAi(params: {
     const msg = error instanceof Error ? error.message : String(error);
     log.error(`Failed to dispatch Symphony inbound to AI: ${msg}`);
   }
+}
+
+function isSenderAllowed(
+  sender: NormalizedInboundMessage["sender"],
+  allowedUsers: string[],
+): boolean {
+  for (const entry of allowedUsers) {
+    if (/^\d+$/.test(entry) && sender.id === entry) return true;
+    if (entry.includes("@") && sender.email === entry) return true;
+    if (sender.username && sender.username === entry) return true;
+  }
+  return false;
 }
 
 function adoptLog(sink: ChannelLogSink | undefined): ChannelLogSink {

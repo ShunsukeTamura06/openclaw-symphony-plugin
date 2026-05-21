@@ -14,6 +14,15 @@ export type SymphonyAccountConfig = {
    */
   datafeedTag?: string;
   jwtTtlSec?: number;
+  /**
+   * Whitelist of users allowed to interact with OpenClaw via Symphony.
+   * Each entry is matched against the sender as follows:
+   *   - digits only  → Symphony userId (e.g. "86311662783854")
+   *   - contains "@" → email address
+   *   - otherwise    → username
+   * When omitted or empty, all users are allowed.
+   */
+  allowedUsers?: string[];
 };
 
 export type ResolvedSymphonyAccount = SymphonyAccountConfig & {
