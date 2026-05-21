@@ -63,12 +63,53 @@ describe("code", () => {
     expect(markdownToMessageMlBody("look at `<div>`")).toContain("<code>&lt;div&gt;</code>");
   });
 
-  it("fenced code blocks -> <pre> with content escaped, language dropped", () => {
-    const md = "```ts\nfunction f(x: number) { return x < 10; }\n```";
+  it("fenced code block with known language -> <code language=\"...\"> (Symphony canonical, Agent 20.14+)", () => {
+    const md = "```typescript\nfunction f(x: number) { return x < 10; }\n```";
     const out = markdownToMessageMlBody(md);
-    expect(out).toContain("<pre>");
+    expect(out).toContain('<code language="typescript">');
     expect(out).toContain("function f(x: number) { return x &lt; 10; }");
-    expect(out).not.toContain('class="lang-ts"');
+    expect(out).toContain("</code>");
+    expect(out).not.toContain("<pre>");
+  });
+
+  it("fenced code block with no language -> <code language=\"plaintext\">", () => {
+    const md = "```\njust some text\n```";
+    const out = markdownToMessageMlBody(md);
+    expect(out).toContain('<code language="plaintext">');
+    expect(out).toContain("just some text");
+  });
+
+  it("normalizes language aliases (bash -> shell, ts -> typescript, c++ -> cpp, etc.)", () => {
+    expect(markdownToMessageMlBody("```bash\nls\n```")).toContain(
+      '<code language="shell">',
+    );
+    expect(markdownToMessageMlBody("```sh\nls\n```")).toContain(
+      '<code language="shell">',
+    );
+    expect(markdownToMessageMlBody("```ts\nx\n```")).toContain(
+      '<code language="typescript">',
+    );
+    expect(markdownToMessageMlBody("```javascript\nx\n```")).toContain(
+      '<code language="js">',
+    );
+    expect(markdownToMessageMlBody("```c++\nx\n```")).toContain(
+      '<code language="cpp">',
+    );
+    expect(markdownToMessageMlBody("```c#\nx\n```")).toContain(
+      '<code language="csharp">',
+    );
+    expect(markdownToMessageMlBody("```py\nx\n```")).toContain(
+      '<code language="python">',
+    );
+    expect(markdownToMessageMlBody("```yml\nx\n```")).toContain(
+      '<code language="yaml">',
+    );
+  });
+
+  it("unknown languages collapse to plaintext (not rejected)", () => {
+    const out = markdownToMessageMlBody("```rust\nfn main() {}\n```");
+    expect(out).toContain('<code language="plaintext">');
+    expect(out).toContain("fn main() {}");
   });
 
   it("does NOT interpret Markdown syntax inside code blocks", () => {
@@ -138,7 +179,7 @@ describe("lists", () => {
   it("code block inside a list item is preserved", () => {
     const md = "- before\n\n  ```\n  some code\n  ```\n- after";
     const out = markdownToMessageMlBody(md);
-    expect(out).toContain("<pre>some code</pre>");
+    expect(out).toContain('<code language="plaintext">some code</code>');
     expect(out).not.toMatch(/<li[^>]*>\s*<p/u);
   });
 });
@@ -323,7 +364,7 @@ describe("integration: realistic AI output", () => {
     expect(out).toContain("<ul>");
     expect(out).toContain("<code>src/foo.ts</code>");
     expect(out).toContain('<a href="https://example.com/docs">ドキュメント</a>');
-    expect(out).toContain("<pre>const x: number = 1;</pre>");
+    expect(out).toContain('<code language="typescript">const x: number = 1;</code>');
     expect(out).toContain("</messageML>");
   });
 });

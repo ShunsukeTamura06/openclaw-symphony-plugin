@@ -36,6 +36,66 @@ function escapeAttr(value: string): string {
 }
 
 /**
+ * Languages Symphony's `<code language="...">` officially supports for
+ * syntax highlighting (Agent 20.14+). Source: Symphony MessageML basic
+ * format tags doc. Anything not in this set (or no language given)
+ * collapses to `plaintext` so the message still ships without rejection
+ * but renders monospace-only.
+ */
+const SYMPHONY_CODE_LANGUAGES = new Set([
+  "c",
+  "cpp",
+  "csharp",
+  "css",
+  "html",
+  "java",
+  "js",
+  "jsx",
+  "json",
+  "markdown",
+  "php",
+  "plaintext",
+  "python",
+  "r",
+  "scala",
+  "shell",
+  "tsx",
+  "typescript",
+  "yaml",
+]);
+
+/**
+ * Map common synonyms / Markdown info-string conventions to Symphony's
+ * official identifier. Anything unknown returns `plaintext`.
+ */
+const LANGUAGE_ALIASES: Record<string, string> = {
+  "c++": "cpp",
+  "c#": "csharp",
+  bash: "shell",
+  sh: "shell",
+  zsh: "shell",
+  console: "shell",
+  shellsession: "shell",
+  javascript: "js",
+  node: "js",
+  jsx: "jsx",
+  ts: "typescript",
+  py: "python",
+  yml: "yaml",
+  md: "markdown",
+  jsonc: "json",
+  json5: "json",
+};
+
+function normalizeCodeLanguage(lang: string | undefined): string {
+  if (!lang) return "plaintext";
+  const lower = lang.trim().toLowerCase().split(/[\s,;]/u)[0] ?? "";
+  if (!lower) return "plaintext";
+  const mapped = LANGUAGE_ALIASES[lower] ?? lower;
+  return SYMPHONY_CODE_LANGUAGES.has(mapped) ? mapped : "plaintext";
+}
+
+/**
  * Symphony's <a href="..."> doc lists "URL" without enumerating schemes.
  * We allow only http(s), mailto, and tel: in line with what the Symphony
  * client renders sensibly, and reject the common XSS / silent-reject
@@ -144,9 +204,14 @@ const renderer: RendererObject = {
   codespan({ text }: Tokens.Codespan) {
     return `<code>${escapeXml(text)}</code>`;
   },
-  code({ text }: Tokens.Code) {
-    // language attr exists from Agent 20.14+ but is rarely needed; we drop it
-    return `<pre>${escapeXml(text)}</pre>`;
+  code({ text, lang }: Tokens.Code) {
+    // Symphony's canonical block code tag is <code language="..."> (Agent
+    // 20.14+, which any modern pod runs). <pre> still works but gets no
+    // syntax highlighting. We always emit <code language="..."> and fall
+    // back to `plaintext` for unknown languages so the result is always a
+    // valid block-code element.
+    const language = normalizeCodeLanguage(lang);
+    return `<code language="${language}">${escapeXml(text)}</code>`;
   },
   /**
    * Symphony has NO <blockquote>. Emit the inner content as-is. The visual
