@@ -1,5 +1,9 @@
 import { getAccountConfig, resolveDefaultAccountId } from "./config.js";
-import { plainToMessageMl, type MentionDirective } from "./messageml.js";
+import {
+  plainToMessageMl,
+  textWithSymphonyFormToMessageMl,
+  type MentionDirective,
+} from "./messageml.js";
 import { getOrCreateClient, getSymphonyRuntime } from "./runtime.js";
 import type { SymphonyAttachmentInput } from "./symphony/types.js";
 import { CHANNEL_ID } from "./types.js";
@@ -128,12 +132,18 @@ export const symphonyOutboundAdapter = {
       ? await loadAttachmentFromMediaUrl(ctx.mediaUrl, ctx.mediaReadFile)
       : undefined;
     try {
+      // Convert AI-emitted Markdown to MessageML before sending. This is the
+      // non-reply outbound path (the gateway delivery callback does the same
+      // conversion); without it, `####`, `**bold**`, lists etc. would appear
+      // verbatim in Symphony. Also detects ```symphony-form``` blocks and
+      // converts them to native Symphony Element forms.
+      const messageMl = textWithSymphonyFormToMessageMl(ctx.text ?? "");
       return await sendSymphonyMessage({
         cfg: ctx.cfg,
         accountId,
         streamId,
         options: {
-          text: ctx.text ?? "",
+          messageMl,
           ...(attachment ? { attachments: [attachment] } : {}),
         },
       });

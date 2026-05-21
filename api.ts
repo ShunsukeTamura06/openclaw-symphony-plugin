@@ -11,6 +11,10 @@ export {
   isAccountConfigured,
 } from "./src/config.js";
 export { plainToMessageMl, messageMlToPlain, escapeXml, unescapeXml } from "./src/messageml.js";
+export {
+  markdownToMessageMl,
+  markdownToMessageMlBody,
+} from "./src/markdown-to-messageml.js";
 export { normalizeInboundMessage, extractMessageFromEvent } from "./src/normalize.js";
 export type {
   SymphonyAccountConfig,

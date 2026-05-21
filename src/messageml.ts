@@ -1,3 +1,4 @@
+import { markdownToMessageMl, markdownToMessageMlBody } from "./markdown-to-messageml.js";
 import type { SymphonyMessage } from "./symphony/types.js";
 
 export type MentionDirective =
@@ -170,30 +171,33 @@ function buildFormMl(formData: SymphonyFormData): string {
 /**
  * ```symphony-form {...}``` ブロックを検出し、MessageML <form> に変換して
  * 完全な <messageML>...</messageML> 文字列を返す。
- * ブロックが存在しない場合は plainToMessageMl の結果を返す。
+ * ブロックが存在しない場合は markdownToMessageMl で Markdown を解釈して返す。
+ *
+ * Markdown → MessageML 変換を介すので、AI が `### 見出し` や `**太字**` を
+ * 出しても Symphony 側で正しくレンダリングされる。
  */
 export function textWithSymphonyFormToMessageMl(text: string): string {
   const match = /```symphony-form\s*(\{[\s\S]*?\})\s*```/u.exec(text);
   if (!match) {
-    return plainToMessageMl({ text });
+    return markdownToMessageMl(text);
   }
 
   const jsonStr = match[1];
   if (!jsonStr) {
-    return plainToMessageMl({ text });
+    return markdownToMessageMl(text);
   }
   let formData: SymphonyFormData;
   try {
     formData = JSON.parse(jsonStr) as SymphonyFormData;
   } catch {
-    return plainToMessageMl({ text });
+    return markdownToMessageMl(text);
   }
 
   const formMl = buildFormMl(formData);
   const cleanedText = text.replace(match[0], "").trim();
-  const escapedText = escapeXml(cleanedText).replace(/\r?\n/gu, "<br/>");
+  const bodyMl = cleanedText ? markdownToMessageMlBody(cleanedText) : "";
 
-  return escapedText
-    ? `<messageML>${escapedText}<br/>${formMl}</messageML>`
+  return bodyMl
+    ? `<messageML>${bodyMl}<br/>${formMl}</messageML>`
     : `<messageML>${formMl}</messageML>`;
 }

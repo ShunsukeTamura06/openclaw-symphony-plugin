@@ -7,10 +7,19 @@ function fence(json: object | string): string {
 }
 
 describe("textWithSymphonyFormToMessageMl", () => {
-  it("falls back to plainToMessageMl when there is no symphony-form block", () => {
+  it("falls back to markdownToMessageMl when there is no symphony-form block", () => {
+    // Plain text now flows through the Markdown converter (which wraps it in <p>)
     expect(textWithSymphonyFormToMessageMl("hello world")).toBe(
-      "<messageML>hello world</messageML>",
+      "<messageML><p>hello world</p></messageML>",
     );
+  });
+
+  it("converts Markdown in non-form text", () => {
+    // Verifies the wiring to markdownToMessageMl — full Markdown coverage is
+    // exercised in test/markdown-to-messageml.test.ts.
+    const out = textWithSymphonyFormToMessageMl("## title\n\n**bold**");
+    expect(out).toContain("<h2>title</h2>");
+    expect(out).toContain("<b>bold</b>");
   });
 
   it("renders a buttons-type form with one <button> per choice", () => {
