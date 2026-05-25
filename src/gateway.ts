@@ -288,6 +288,7 @@ async function dispatchInboundToAi(params: {
     CommandAuthorized: false,
   };
   const ctxPayload = channelRuntime.reply.finalizeInboundContext(baseCtx);
+  const trace = newTurnTrace(normalized.messageId);
 
   try {
     await runInboundReplyTurn<NormalizedInboundMessage>({
@@ -336,43 +337,131 @@ async function dispatchInboundToAi(params: {
             },
           },
           delivery: {
-            deliver: async (payload: ReplyPayload) => {
+            deliver: async (payload: ReplyPayload, info: { kind: string }) => {
               const text = payload.text ?? "";
+              const kind = info.kind ?? "unknown";
+              recordInvocation(trace, kind);
+              log.info(
+                `Symphony deliver turn=${trace.turnId} kind=${kind} textLen=${text.length} hasMedia=${Boolean(payload.mediaUrl)}`,
+              );
               if (!text && !payload.mediaUrl) {
+                trace.emptyPayloadsSkipped += 1;
+                log.info(
+                  `Symphony deliver turn=${trace.turnId} kind=${kind} -> skipped (empty payload)`,
+                );
                 return;
               }
               const messageMl = textWithSymphonyFormToMessageMl(text);
-              const sent = await sendSymphonyMessage({
-                cfg,
-                accountId,
-                streamId: normalized.streamId,
-                options: { messageMl },
-              });
-              // Refs Q3 (docs/review-2026-05-20.md): one info line per
-              // successful delivery so operators can answer "did the
-              // reply leave OpenClaw?" without enabling debug logging.
-              log.info(`Symphony reply sent: ${sent.messageId} -> ${normalized.streamId}`);
-              // Pre-mark the sent message ID so the Datafeed echo is silently ignored.
-              const sentKey = buildSymphonyDedupeKey({
-                accountId,
-                streamId: normalized.streamId,
-                messageId: sent.messageId,
-              });
-              dedupeStore.mark(sentKey);
+              try {
+                const sent = await sendSymphonyMessage({
+                  cfg,
+                  accountId,
+                  streamId: normalized.streamId,
+                  options: { messageMl },
+                });
+                trace.deliverySent += 1;
+                log.info(
+                  `Symphony reply sent turn=${trace.turnId} kind=${kind} msgId=${sent.messageId} -> ${normalized.streamId}`,
+                );
+                // Pre-mark the sent message ID so the Datafeed echo is silently ignored.
+                const sentKey = buildSymphonyDedupeKey({
+                  accountId,
+                  streamId: normalized.streamId,
+                  messageId: sent.messageId,
+                });
+                dedupeStore.mark(sentKey);
+              } catch (sendErr) {
+                trace.sendErrors += 1;
+                log.error(
+                  `Symphony reply send FAILED turn=${trace.turnId} kind=${kind}: ${
+                    sendErr instanceof Error ? sendErr.message : String(sendErr)
+                  }`,
+                );
+                throw sendErr;
+              }
             },
             onError: (err: unknown, info: { kind: string }) => {
+              trace.deliveryErrors += 1;
               log.error(
-                `Symphony reply (${info.kind}) failed: ${err instanceof Error ? err.message : String(err)}`,
+                `Symphony deliver onError turn=${trace.turnId} kind=${info.kind}: ${
+                  err instanceof Error ? err.message : String(err)
+                }`,
               );
             },
           },
-        }),
+          // Observability for the long-thinking GUI-only bug. The reply
+          // pipeline can silently SKIP a delivery (silentReplyContext,
+          // duplicate suppression, internal timeouts, etc.) and we'd never
+          // know. Hook into the dispatcher's skip path to attribute it.
+          dispatcherOptions: {
+            onSkip: (
+              payload: ReplyPayload,
+              info: { kind: string; reason?: string },
+            ) => {
+              trace.dispatcherSkipped += 1;
+              log.warn?.(
+                `Symphony dispatch skipped turn=${trace.turnId} kind=${info.kind} reason=${
+                  info.reason ?? "<unknown>"
+                } textLen=${(payload.text ?? "").length}`,
+              );
+            },
+          },
+        } as never),
       },
     });
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
-    log.error(`Failed to dispatch Symphony inbound to AI: ${msg}`);
+    log.error(`Failed to dispatch Symphony inbound to AI turn=${trace.turnId}: ${msg}`);
+  } finally {
+    // Post-mortem. If nothing reached Symphony and dispatch finished, we hit
+    // the long-thinking / GUI-only bug. This warning is the canonical
+    // diagnostic — grep for `Symphony NO-DELIVERY` in logs to find every
+    // occurrence and correlate with the agent's behavior at that time.
+    if (trace.deliverySent === 0) {
+      log.warn?.(
+        `Symphony NO-DELIVERY turn=${trace.turnId} stream=${normalized.streamId} ` +
+          `sessionKey=${route.sessionKey} ` +
+          `invocations=${JSON.stringify(trace.invocations)} ` +
+          `emptyPayloadsSkipped=${trace.emptyPayloadsSkipped} ` +
+          `dispatcherSkipped=${trace.dispatcherSkipped} ` +
+          `sendErrors=${trace.sendErrors} ` +
+          `deliveryErrors=${trace.deliveryErrors}`,
+      );
+    }
   }
+}
+
+/**
+ * Per-turn telemetry used to diagnose the "long-thinking GUI-only" bug:
+ * if `deliverySent === 0` after `runInboundReplyTurn` returns, the reply
+ * never reached Symphony despite the agent run producing output (which
+ * the management UI transcript shows). The remaining counters explain
+ * *why* — empty payloads, dispatcher skips, send errors, etc.
+ */
+type TurnTrace = {
+  turnId: string;
+  invocations: Record<string, number>;
+  deliverySent: number;
+  emptyPayloadsSkipped: number;
+  dispatcherSkipped: number;
+  sendErrors: number;
+  deliveryErrors: number;
+};
+
+function newTurnTrace(turnId: string): TurnTrace {
+  return {
+    turnId,
+    invocations: {},
+    deliverySent: 0,
+    emptyPayloadsSkipped: 0,
+    dispatcherSkipped: 0,
+    sendErrors: 0,
+    deliveryErrors: 0,
+  };
+}
+
+function recordInvocation(trace: TurnTrace, kind: string): void {
+  trace.invocations[kind] = (trace.invocations[kind] ?? 0) + 1;
 }
 
 function isSenderAllowed(
