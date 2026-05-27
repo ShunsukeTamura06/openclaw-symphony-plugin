@@ -201,3 +201,22 @@ export function textWithSymphonyFormToMessageMl(text: string): string {
     ? `<messageML>${bodyMl}<br/>${formMl}</messageML>`
     : `<messageML>${formMl}</messageML>`;
 }
+
+/**
+ * Guaranteed-valid MessageML from arbitrary text.
+ *
+ * Strips every tag-like structure and emits `<messageML>{escaped text}</messageML>`
+ * with newlines as `<br/>`. Used as a last-resort fallback when the rich
+ * Markdown→MessageML conversion produces XML that Symphony rejects.
+ *
+ * The point is *not* to preserve formatting — it's to make sure the user
+ * receives the text content of the AI's reply at all, instead of silence.
+ */
+export function stripToPlainMessageMl(text: string): string {
+  // Drop anything that looks like a tag (well-formed or not) and collapse
+  // resulting double whitespace. We do this before XML-escaping so the
+  // escaped text never contains '<' or '>' that could re-form a tag.
+  const noTags = (text ?? "").replace(/<[^>]*>?/gu, "");
+  const escaped = escapeXml(noTags).replace(/\r?\n/gu, "<br/>");
+  return `<messageML>${escaped}</messageML>`;
+}

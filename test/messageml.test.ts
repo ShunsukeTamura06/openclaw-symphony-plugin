@@ -3,6 +3,7 @@ import {
   escapeXml,
   messageMlToPlain,
   plainToMessageMl,
+  stripToPlainMessageMl,
   unescapeXml,
 } from "../src/messageml.js";
 
@@ -123,5 +124,48 @@ describe("messageMlToPlain", () => {
   it("decodes numeric HTML entities", () => {
     // ☃ is U+2603, decimal 9731
     expect(messageMlToPlain("<messageML>snow: &#9731;</messageML>").text).toBe("snow: ☃");
+  });
+});
+
+describe("stripToPlainMessageMl", () => {
+  it("wraps plain text in <messageML> tags", () => {
+    expect(stripToPlainMessageMl("hello world")).toBe("<messageML>hello world</messageML>");
+  });
+
+  it("converts newlines to <br/>", () => {
+    expect(stripToPlainMessageMl("line one\nline two")).toBe(
+      "<messageML>line one<br/>line two</messageML>",
+    );
+    expect(stripToPlainMessageMl("crlf\r\nstyle")).toBe(
+      "<messageML>crlf<br/>style</messageML>",
+    );
+  });
+
+  it("escapes XML special characters in the body", () => {
+    expect(stripToPlainMessageMl("a & b < c > d")).toBe(
+      "<messageML>a &amp; b  d</messageML>",
+    );
+    // The '<' / '>' got dropped as faux-tags by the strip step before escaping;
+    // that's by design — the goal is "guaranteed valid", not "perfectly faithful".
+  });
+
+  it("strips arbitrary tag-like fragments that would have broken the MessageML parse", () => {
+    expect(stripToPlainMessageMl("<div>hi <broken")).toBe("<messageML>hi </messageML>");
+    expect(stripToPlainMessageMl("<unclosed attr=\"x")).toBe("<messageML></messageML>");
+    expect(stripToPlainMessageMl("<code language=\"weird>nope</code>")).toBe(
+      "<messageML>nope</messageML>",
+    );
+  });
+
+  it("handles empty / undefined-ish input safely", () => {
+    expect(stripToPlainMessageMl("")).toBe("<messageML></messageML>");
+    // @ts-expect-error — intentionally testing the runtime guard
+    expect(stripToPlainMessageMl(undefined)).toBe("<messageML></messageML>");
+  });
+
+  it("survives input that looks dangerous (script tags, unbalanced quotes)", () => {
+    expect(stripToPlainMessageMl("<script>alert('xss')</script>")).toBe(
+      "<messageML>alert(&apos;xss&apos;)</messageML>",
+    );
   });
 });
