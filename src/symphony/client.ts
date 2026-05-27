@@ -15,6 +15,7 @@ import {
   sendMessage,
   type SendMessageResponse,
 } from "./messages.js";
+import { addReaction, removeReaction } from "./reactions.js";
 import {
   createIm,
   createRoom,
@@ -156,5 +157,13 @@ export class SymphonyClient {
 
   async deleteDatafeed(datafeedId: string): Promise<void> {
     await this.request<void>(deleteDatafeed(datafeedId));
+  }
+
+  async addReaction(params: { messageId: string; reaction: string }): Promise<void> {
+    await this.request<unknown>(addReaction(params));
+  }
+
+  async removeReaction(params: { messageId: string; reaction: string }): Promise<void> {
+    await this.request<unknown>(removeReaction(params));
   }
 }
