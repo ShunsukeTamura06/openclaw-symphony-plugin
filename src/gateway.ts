@@ -14,10 +14,30 @@ import {
   normalizeInboundMessage,
   type NormalizedInboundMessage,
 } from "./normalize.js";
-import { textWithSymphonyFormToMessageMl } from "./messageml.js";
+import { stripToPlainMessageMl, textWithSymphonyFormToMessageMl } from "./messageml.js";
 import { disposeClient, getOrCreateClient, getSymphonyRuntime } from "./runtime.js";
+import type { SymphonyClient } from "./symphony/client.js";
 import { runDatafeedLoop } from "./symphony/datafeed-loop.js";
 import { CHANNEL_ID, type ResolvedSymphonyAccount } from "./types.js";
+
+/**
+ * Emoji shortcode used to mark "OpenClaw received your message and is
+ * processing it". Added in handleInboundEnvelope right before enqueue,
+ * removed in dispatchInboundToAi's finally block (success or failure).
+ *
+ * Both add and remove are fire-and-forget — reaction API hiccups must
+ * never block the AI dispatch or the datafeed loop.
+ */
+const PROCESSING_REACTION = "hourglass";
+
+/**
+ * Soft apology surfaced to the Symphony user when the AI run finished
+ * but no reply made it to Symphony (MessageML send failed even after the
+ * plain-text fallback). Wording matches OpenClaw's overall tone: friendly,
+ * non-alarming, and points to where the actual reply can still be seen.
+ */
+const APOLOGY_MESSAGE =
+  "<messageML>返信をうまくお届けできなかったみたいです…。OpenClaw の管理画面から内容をご確認ください。</messageML>";
 
 type RunInboundReplyTurnParams = Parameters<typeof runInboundReplyTurn<NormalizedInboundMessage>>[0];
 type ChannelTurnAdapter = RunInboundReplyTurnParams["adapter"];
@@ -132,6 +152,7 @@ export const symphonyGatewayAdapter = {
             log,
             queue: inboundQueue,
             dedupe: dedupeStore,
+            client,
           }),
       },
     });
@@ -178,6 +199,11 @@ export function handleInboundEnvelope(params: {
   log: ChannelLogSink;
   queue: InboundQueue;
   dedupe: MessageDedupeStore;
+  /**
+   * Symphony client used for the best-effort hourglass reaction lifecycle.
+   * Optional so unit tests can omit it; production wiring always provides it.
+   */
+  client?: SymphonyClient;
 }): void {
   const message = extractMessageFromEvent(params.envelope);
   const isElementsAction = !message && params.envelope.type === "SYMPHONYELEMENTSACTION";
@@ -223,6 +249,22 @@ export function handleInboundEnvelope(params: {
     params.log.info(`duplicate Symphony message skipped: ${dedupeKey}`);
     return;
   }
+  // Best-effort "received" signal. Fire-and-forget so reaction API
+  // latency cannot stall the datafeed loop. The removal happens in
+  // dispatchInboundToAi's finally block regardless of outcome.
+  const inboundMessageId = normalized.messageId;
+  const client = params.client;
+  if (client) {
+    client
+      .addReaction({ messageId: inboundMessageId, reaction: PROCESSING_REACTION })
+      .catch((err: unknown) =>
+        params.log.warn?.(
+          `Symphony addReaction failed for ${inboundMessageId}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        ),
+      );
+  }
   params.queue.enqueue({
     accountId: params.accountId,
     streamId: normalized.streamId,
@@ -234,6 +276,7 @@ export function handleInboundEnvelope(params: {
         normalized,
         channelRuntime: params.channelRuntime,
         log: params.log,
+        ...(client ? { client } : {}),
       });
     },
   });
@@ -245,8 +288,10 @@ async function dispatchInboundToAi(params: {
   normalized: NormalizedInboundMessage;
   channelRuntime: FullChannelRuntime | undefined;
   log: ChannelLogSink;
+  /** Symphony client used to remove the hourglass reaction on completion. */
+  client?: SymphonyClient;
 }): Promise<void> {
-  const { cfg, accountId, normalized, channelRuntime, log } = params;
+  const { cfg, accountId, normalized, channelRuntime, log, client } = params;
 
   if (!channelRuntime?.routing || !channelRuntime.session || !channelRuntime.reply) {
     return;
@@ -353,31 +398,47 @@ async function dispatchInboundToAi(params: {
               }
               const messageMl = textWithSymphonyFormToMessageMl(text);
               try {
-                const sent = await sendSymphonyMessage({
+                await sendAndMarkEcho({
                   cfg,
                   accountId,
                   streamId: normalized.streamId,
-                  options: { messageMl },
+                  messageMl,
+                  trace,
+                  kind,
+                  log,
                 });
-                trace.deliverySent += 1;
-                log.info(
-                  `Symphony reply sent turn=${trace.turnId} kind=${kind} msgId=${sent.messageId} -> ${normalized.streamId}`,
-                );
-                // Pre-mark the sent message ID so the Datafeed echo is silently ignored.
-                const sentKey = buildSymphonyDedupeKey({
-                  accountId,
-                  streamId: normalized.streamId,
-                  messageId: sent.messageId,
-                });
-                dedupeStore.mark(sentKey);
               } catch (sendErr) {
+                // (A) Plain-text fallback. The most common cause of a
+                // sendMessage failure here is that the rich Markdown →
+                // MessageML conversion produced XML that Symphony rejected
+                // (unclosed tag, weird entity, etc.). Retry once with the
+                // text stripped of all markup so the user at least gets
+                // the words — formatting is the sacrifice.
                 trace.sendErrors += 1;
-                log.error(
-                  `Symphony reply send FAILED turn=${trace.turnId} kind=${kind}: ${
+                log.warn?.(
+                  `Symphony reply send failed turn=${trace.turnId} kind=${kind}, retrying as plain text: ${
                     sendErr instanceof Error ? sendErr.message : String(sendErr)
                   }`,
                 );
-                throw sendErr;
+                try {
+                  await sendAndMarkEcho({
+                    cfg,
+                    accountId,
+                    streamId: normalized.streamId,
+                    messageMl: stripToPlainMessageMl(text),
+                    trace,
+                    kind: `${kind}+plaintext`,
+                    log,
+                  });
+                } catch (fallbackErr) {
+                  trace.sendErrors += 1;
+                  log.error(
+                    `Symphony reply send FAILED (after plain-text fallback) turn=${trace.turnId} kind=${kind}: ${
+                      fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr)
+                    }`,
+                  );
+                  throw fallbackErr;
+                }
               }
             },
             onError: (err: unknown, info: { kind: string }) => {
@@ -427,8 +488,86 @@ async function dispatchInboundToAi(params: {
           `sendErrors=${trace.sendErrors} ` +
           `deliveryErrors=${trace.deliveryErrors}`,
       );
+
+      // (B) Final apology fallback. Empty-payload skips are an expected
+      // intermediate state (the dispatcher may flush nothing on a tool-only
+      // turn) — we only apologize when there were genuine send errors or
+      // when the dispatcher silently dropped a payload that *did* exist.
+      const shouldApologize =
+        trace.sendErrors > 0 || trace.dispatcherSkipped > 0 || trace.deliveryErrors > 0;
+      if (shouldApologize) {
+        try {
+          await sendSymphonyMessage({
+            cfg,
+            accountId,
+            streamId: normalized.streamId,
+            options: { messageMl: APOLOGY_MESSAGE },
+          });
+          log.info(`Symphony apology sent turn=${trace.turnId} -> ${normalized.streamId}`);
+        } catch (apologyErr) {
+          // Even the apology failed. Nothing useful left to do but record it.
+          log.error(
+            `Symphony apology send FAILED turn=${trace.turnId}: ${
+              apologyErr instanceof Error ? apologyErr.message : String(apologyErr)
+            }`,
+          );
+        }
+      }
+    }
+
+    // (C) Remove the hourglass reaction regardless of success/failure so
+    // the Symphony user sees the "processing" indicator clear. Fire-and-
+    // forget — reaction API hiccups must not propagate.
+    if (client) {
+      client
+        .removeReaction({
+          messageId: normalized.messageId,
+          reaction: PROCESSING_REACTION,
+        })
+        .catch((err: unknown) =>
+          log.warn?.(
+            `Symphony removeReaction failed for ${normalized.messageId}: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          ),
+        );
     }
   }
+}
+
+/**
+ * Sends one MessageML message and, on success, pre-marks the resulting
+ * messageId in the dedupe store so the Datafeed echo of our own reply is
+ * silently ignored. Bumps `trace.deliverySent` exactly once per call site.
+ *
+ * Extracted from `delivery.deliver` so the plain-text fallback path can
+ * call it a second time without duplicating the dedupe / logging logic.
+ */
+async function sendAndMarkEcho(params: {
+  cfg: OpenClawConfig;
+  accountId: string;
+  streamId: string;
+  messageMl: string;
+  trace: TurnTrace;
+  kind: string;
+  log: ChannelLogSink;
+}): Promise<void> {
+  const sent = await sendSymphonyMessage({
+    cfg: params.cfg,
+    accountId: params.accountId,
+    streamId: params.streamId,
+    options: { messageMl: params.messageMl },
+  });
+  params.trace.deliverySent += 1;
+  params.log.info(
+    `Symphony reply sent turn=${params.trace.turnId} kind=${params.kind} msgId=${sent.messageId} -> ${params.streamId}`,
+  );
+  const sentKey = buildSymphonyDedupeKey({
+    accountId: params.accountId,
+    streamId: params.streamId,
+    messageId: sent.messageId,
+  });
+  dedupeStore.mark(sentKey);
 }
 
 /**

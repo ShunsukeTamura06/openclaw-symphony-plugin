@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { MessageDedupeStore } from "../src/dedupe.js";
 import { handleInboundEnvelope } from "../src/gateway.js";
 import { InboundQueue } from "../src/inbound-queue.js";
+import type { SymphonyClient } from "../src/symphony/client.js";
 import type { DatafeedEventEnvelope, SymphonyMessage } from "../src/symphony/types.js";
 
 const silentLog = {
@@ -267,6 +268,93 @@ describe("handleInboundEnvelope", () => {
         dedupe,
       });
       expect(enqueueSpy).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  // (C) Hourglass reaction lifecycle — the "received" signal back to Symphony.
+  describe("hourglass reaction on inbound", () => {
+    it("fires addReaction with the hourglass shortcode when a message is accepted", () => {
+      const queue = new InboundQueue();
+      const dedupe = new MessageDedupeStore();
+      vi.spyOn(queue, "enqueue").mockImplementation(() => undefined);
+      const addReaction = vi.fn(async () => undefined);
+      const removeReaction = vi.fn(async () => undefined);
+      const client = { addReaction, removeReaction } as unknown as SymphonyClient;
+
+      handleInboundEnvelope({
+        envelope: makeMessageSentEnvelope(makeSymphonyMessage()),
+        cfg: {} as never,
+        accountId: "acc",
+        channelRuntime: undefined,
+        log: silentLog,
+        queue,
+        dedupe,
+        client,
+      });
+
+      expect(addReaction).toHaveBeenCalledTimes(1);
+      expect(addReaction).toHaveBeenCalledWith({
+        messageId: "msg-1",
+        reaction: "hourglass",
+      });
+      // removeReaction is the responsibility of dispatchInboundToAi's finally
+      // block — not exercised here.
+      expect(removeReaction).not.toHaveBeenCalled();
+    });
+
+    it("does NOT call addReaction when the message is dropped (dedupe / self / mention gate)", () => {
+      const queue = new InboundQueue();
+      const dedupe = new MessageDedupeStore();
+      const addReaction = vi.fn(async () => undefined);
+      const client = {
+        addReaction,
+        removeReaction: vi.fn(),
+      } as unknown as SymphonyClient;
+
+      // Self-message → should be dropped before reaction
+      handleInboundEnvelope({
+        envelope: makeMessageSentEnvelope(makeSymphonyMessage({ user: { id: 42 } })),
+        cfg: {} as never,
+        accountId: "acc",
+        selfUserId: 42,
+        channelRuntime: undefined,
+        log: silentLog,
+        queue,
+        dedupe,
+        client,
+      });
+
+      expect(addReaction).not.toHaveBeenCalled();
+    });
+
+    it("does not throw if addReaction rejects (best-effort)", async () => {
+      const queue = new InboundQueue();
+      const dedupe = new MessageDedupeStore();
+      vi.spyOn(queue, "enqueue").mockImplementation(() => undefined);
+      const warn = vi.fn();
+      const client = {
+        addReaction: vi.fn(async () => {
+          throw new Error("symphony reactions API down");
+        }),
+        removeReaction: vi.fn(async () => undefined),
+      } as unknown as SymphonyClient;
+
+      handleInboundEnvelope({
+        envelope: makeMessageSentEnvelope(makeSymphonyMessage()),
+        cfg: {} as never,
+        accountId: "acc",
+        channelRuntime: undefined,
+        log: { ...silentLog, warn },
+        queue,
+        dedupe,
+        client,
+      });
+
+      // Let the fire-and-forget rejection settle
+      await new Promise((r) => setImmediate(r));
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining("Symphony addReaction failed"),
+      );
     });
   });
 });
