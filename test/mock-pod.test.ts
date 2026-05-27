@@ -24,12 +24,6 @@ function createMockPod(opts?: { sessionUserId?: number; failFirstReadWith?: numb
     attachmentNames: string[];
   };
 
-  type ReactionEvent = {
-    op: "add" | "remove";
-    messageId: string;
-    reaction: string;
-  };
-
   const state = {
     sessionToken: "session-tok-1",
     keyManagerToken: "km-tok-1",
@@ -37,7 +31,6 @@ function createMockPod(opts?: { sessionUserId?: number; failFirstReadWith?: numb
     cursorByDatafeed: new Map<string, number>(),
     queuedEvents: [] as DatafeedEventEnvelope[],
     sentMessages: [] as SentMessage[],
-    reactionEvents: [] as ReactionEvent[],
     authCallCount: 0,
     readCallCount: 0,
     failFirstReadWith: opts?.failFirstReadWith,
@@ -139,19 +132,6 @@ function createMockPod(opts?: { sessionUserId?: number; failFirstReadWith?: numb
       }
     }
 
-    // Reactions (pod scope)
-    const reactionMatch = path.match(/^\/pod\/v1\/message\/([^/]+)\/reactions\/(add|remove)$/u);
-    if (method === "POST" && reactionMatch) {
-      const denied = requireAuth(headers, "pod");
-      if (denied) return denied;
-      const messageId = decodeURIComponent(reactionMatch[1]!);
-      const op = reactionMatch[2]! as "add" | "remove";
-      const body = init?.body ? JSON.parse(init.body as string) : {};
-      const reaction = String(body.reaction ?? "");
-      state.reactionEvents.push({ op, messageId, reaction });
-      return jsonResponse({ ok: true });
-    }
-
     // Send message (multipart)
     const sendMatch = path.match(/^\/agent\/v4\/stream\/([^/]+)\/message\/create$/u);
     if (method === "POST" && sendMatch) {
@@ -195,7 +175,6 @@ function createMockPod(opts?: { sessionUserId?: number; failFirstReadWith?: numb
       });
     },
     sentMessages: () => state.sentMessages.slice(),
-    reactionEvents: () => state.reactionEvents.slice(),
   };
 }
 
@@ -296,17 +275,4 @@ describe("mock Symphony pod (end-to-end client)", () => {
     expect(res.status).toBe(401);
   });
 
-  it("records add/remove reaction events", async () => {
-    const pod = createMockPod();
-    const client = buildClient(pod);
-    await client.sessionInfo();
-
-    await client.addReaction({ messageId: "M-abc", reaction: "hourglass" });
-    await client.removeReaction({ messageId: "M-abc", reaction: "hourglass" });
-
-    expect(pod.reactionEvents()).toEqual([
-      { op: "add", messageId: "M-abc", reaction: "hourglass" },
-      { op: "remove", messageId: "M-abc", reaction: "hourglass" },
-    ]);
-  });
 });

@@ -16,19 +16,8 @@ import {
 } from "./normalize.js";
 import { stripToPlainMessageMl, textWithSymphonyFormToMessageMl } from "./messageml.js";
 import { disposeClient, getOrCreateClient, getSymphonyRuntime } from "./runtime.js";
-import type { SymphonyClient } from "./symphony/client.js";
 import { runDatafeedLoop } from "./symphony/datafeed-loop.js";
 import { CHANNEL_ID, type ResolvedSymphonyAccount } from "./types.js";
-
-/**
- * Emoji shortcode used to mark "OpenClaw received your message and is
- * processing it". Added in handleInboundEnvelope right before enqueue,
- * removed in dispatchInboundToAi's finally block (success or failure).
- *
- * Both add and remove are fire-and-forget — reaction API hiccups must
- * never block the AI dispatch or the datafeed loop.
- */
-const PROCESSING_REACTION = "hourglass";
 
 /**
  * Soft apology surfaced to the Symphony user when the AI run finished
@@ -38,6 +27,16 @@ const PROCESSING_REACTION = "hourglass";
  */
 const APOLOGY_MESSAGE =
   "<messageML>返信をうまくお届けできなかったみたいです…。OpenClaw の管理画面から内容をご確認ください。</messageML>";
+
+// NOTE: Earlier iterations included a "hourglass" emoji reaction lifecycle
+// (added on inbound, removed on completion) to signal "OpenClaw is
+// processing your message" back to Symphony. That feature was removed
+// because Symphony's *public REST API* — verified against the FINOS
+// canonical OpenAPI specs at github.com/finos/symphony-api-spec — does
+// not expose any reaction add/remove endpoint. The user-facing reactions
+// feature in the Symphony web client is not callable from bots. Do not
+// re-add reaction API calls without first confirming a documented
+// endpoint exists in your deployment's Symphony version.
 
 type RunInboundReplyTurnParams = Parameters<typeof runInboundReplyTurn<NormalizedInboundMessage>>[0];
 type ChannelTurnAdapter = RunInboundReplyTurnParams["adapter"];
@@ -152,7 +151,6 @@ export const symphonyGatewayAdapter = {
             log,
             queue: inboundQueue,
             dedupe: dedupeStore,
-            client,
           }),
       },
     });
@@ -199,11 +197,6 @@ export function handleInboundEnvelope(params: {
   log: ChannelLogSink;
   queue: InboundQueue;
   dedupe: MessageDedupeStore;
-  /**
-   * Symphony client used for the best-effort hourglass reaction lifecycle.
-   * Optional so unit tests can omit it; production wiring always provides it.
-   */
-  client?: SymphonyClient;
 }): void {
   const message = extractMessageFromEvent(params.envelope);
   const isElementsAction = !message && params.envelope.type === "SYMPHONYELEMENTSACTION";
@@ -249,22 +242,6 @@ export function handleInboundEnvelope(params: {
     params.log.info(`duplicate Symphony message skipped: ${dedupeKey}`);
     return;
   }
-  // Best-effort "received" signal. Fire-and-forget so reaction API
-  // latency cannot stall the datafeed loop. The removal happens in
-  // dispatchInboundToAi's finally block regardless of outcome.
-  const inboundMessageId = normalized.messageId;
-  const client = params.client;
-  if (client) {
-    client
-      .addReaction({ messageId: inboundMessageId, reaction: PROCESSING_REACTION })
-      .catch((err: unknown) =>
-        params.log.warn?.(
-          `Symphony addReaction failed for ${inboundMessageId}: ${
-            err instanceof Error ? err.message : String(err)
-          }`,
-        ),
-      );
-  }
   params.queue.enqueue({
     accountId: params.accountId,
     streamId: normalized.streamId,
@@ -276,7 +253,6 @@ export function handleInboundEnvelope(params: {
         normalized,
         channelRuntime: params.channelRuntime,
         log: params.log,
-        ...(client ? { client } : {}),
       });
     },
   });
@@ -288,10 +264,8 @@ async function dispatchInboundToAi(params: {
   normalized: NormalizedInboundMessage;
   channelRuntime: FullChannelRuntime | undefined;
   log: ChannelLogSink;
-  /** Symphony client used to remove the hourglass reaction on completion. */
-  client?: SymphonyClient;
 }): Promise<void> {
-  const { cfg, accountId, normalized, channelRuntime, log, client } = params;
+  const { cfg, accountId, normalized, channelRuntime, log } = params;
 
   if (!channelRuntime?.routing || !channelRuntime.session || !channelRuntime.reply) {
     return;
@@ -513,24 +487,6 @@ async function dispatchInboundToAi(params: {
           );
         }
       }
-    }
-
-    // (C) Remove the hourglass reaction regardless of success/failure so
-    // the Symphony user sees the "processing" indicator clear. Fire-and-
-    // forget — reaction API hiccups must not propagate.
-    if (client) {
-      client
-        .removeReaction({
-          messageId: normalized.messageId,
-          reaction: PROCESSING_REACTION,
-        })
-        .catch((err: unknown) =>
-          log.warn?.(
-            `Symphony removeReaction failed for ${normalized.messageId}: ${
-              err instanceof Error ? err.message : String(err)
-            }`,
-          ),
-        );
     }
   }
 }

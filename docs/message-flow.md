@@ -28,8 +28,6 @@ sequenceDiagram
     GW->>GW: allowedUsers gate
     Note over GW: drop if group<br/>and bot not @mentioned
     GW->>GW: dedupe<br/>(accountId:streamId:messageId)
-    GW-)SP: addReaction "hourglass"<br/>(fire-and-forget — C)
-    SP-->>U: ⏳ appears on the message
     GW->>Q: enqueue(job)
     GW-->>DL: return (does NOT wait)
     DL->>SP: next long-poll
@@ -63,8 +61,6 @@ sequenceDiagram
         OUT->>SP: POST .../message/create
         SP-->>U: 「返信をうまくお届けできなかったみたいです…」
     end
-    DI-)SP: removeReaction "hourglass"<br/>(fire-and-forget — C)
-    SP-->>U: ⏳ disappears
     Note over DI: if deliverySent === 0,<br/>emit "Symphony NO-DELIVERY" warning to logs
 ```
 
@@ -187,14 +183,13 @@ stateDiagram-v2
     Failed --> [*]
 ```
 
-## 5. Reply resilience (A + B + C)
+## 5. Reply resilience (A + B)
 
 What the Symphony user sees when something goes wrong with the reply:
 
 ```mermaid
 flowchart TD
-    Recv[Inbound message accepted] --> AddRx["⏳ addReaction hourglass<br/>(fire-and-forget)"]
-    AddRx --> Run[AI run produces reply text]
+    Recv[Inbound message accepted] --> Run[AI run produces reply text]
     Run --> Send1["sendSymphonyMessage<br/>(MessageML from Markdown)"]
     Send1 -->|200 OK| OK[reply visible<br/>deliverySent++ ✅]
     Send1 -->|reject| StripA["A: stripToPlainMessageMl<br/>(escape + br only)"]
@@ -203,20 +198,35 @@ flowchart TD
     Send2 -->|reject| Apol["B: send APOLOGY_MESSAGE<br/>「返信をうまくお届けできなかった<br/>みたいです…」"]
     Apol -->|200 OK| Apol2[apology visible<br/>user knows turn ended ⚠]
     Apol -->|reject| LogOnly[log-only — nothing reaches Symphony 🚨]
-    OK --> Done
-    OK2 --> Done
-    Apol2 --> Done
-    LogOnly --> Done
-    Done["⏳ removeReaction hourglass<br/>(fire-and-forget — C)"]
 ```
 
 | Layer | Trigger | What the user sees |
 | --- | --- | --- |
-| **Happy path** | MessageML accepted | Formatted reply, ⏳ disappears |
-| **A — plain-text fallback** | MessageML rejected (malformed XML) | Unformatted reply with the same words, ⏳ disappears |
-| **B — apology** | even plain-text rejected, or dispatcher dropped a payload | Fixed apology message in JP, ⏳ disappears |
-| **B falls through** | even the apology failed | Nothing on Symphony, ⏳ still disappears, logs warn |
-| **C — hourglass reaction** | always added on accept, always removed on completion | ⏳ on user's message indicates "OpenClaw saw this and is working" |
+| **Happy path** | MessageML accepted | Formatted reply |
+| **A — plain-text fallback** | MessageML rejected (malformed XML) | Unformatted reply with the same words |
+| **B — apology** | even plain-text rejected, or dispatcher dropped a payload | Fixed apology message in JP |
+| **B falls through** | even the apology failed | Nothing on Symphony, logs warn `Symphony NO-DELIVERY` |
+
+### Why there is no "C — processing indicator"
+
+An earlier iteration added a `⏳ hourglass` emoji reaction on inbound and
+removed it on completion, to give the Symphony user a visible "OpenClaw
+saw this" signal while the AI was thinking. **That feature was removed**
+because Symphony's *public REST API* does not expose any reaction
+add/remove endpoint:
+
+- The official FINOS [symphony-api-spec](https://github.com/finos/symphony-api-spec)
+  has zero matches for `reaction` across both the pod and agent OpenAPI
+  specs.
+- The user-facing emoji reactions feature in the Symphony web client is
+  *not* callable from bots.
+- No official Symphony BDK (Java / Python / .NET) ships a reactions
+  client method.
+
+If your Symphony deployment exposes a private reactions endpoint, this
+plugin does *not* use it — wire it up at the application layer if you
+need it. See the comment block at the top of `src/gateway.ts` for the
+historical context before re-adding any reaction code.
 
 ## Key invariants
 
@@ -228,6 +238,5 @@ flowchart TD
 | Group rooms require bot @mention (except form submissions) | mention gate in `handleInboundEnvelope` |
 | Silent reply failures are observable | `Symphony NO-DELIVERY` warn in `dispatchInboundToAi` finally |
 | Graceful shutdown does not cut replies mid-stream | `inboundQueue.drain()` in `stopAccount` |
-| Symphony user always sees "received" feedback | hourglass reaction add on accept, remove in `finally` (C) |
 | MessageML conversion failure does not lose the reply text | plain-text fallback in `delivery.deliver` (A) |
 | If even the fallback fails, the user gets a clear "we failed" signal | apology message in `dispatchInboundToAi` finally (B) |
