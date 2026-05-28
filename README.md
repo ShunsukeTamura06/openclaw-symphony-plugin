@@ -55,6 +55,33 @@ channels:
     enabled: true
 ```
 
+### Access control (optional)
+
+Both filters run **before the LLM is invoked**, so blocked messages never
+hit the agent runtime.
+
+```yaml
+channels:
+  symphony:
+    # ...
+    allowedUsers:
+      - "86311662783854"           # by Symphony userId (digits only)
+      - "alice@example.com"        # by email (contains '@')
+      - "bob.smith"                # by username (anything else)
+    allowedRooms:
+      - "vTOlxOhTcjFCKZ8GHrSlhX___oRm1dlFdA"   # streamId of an allowed room
+      - "abcDEF123_-=="                         # another room
+```
+
+- `allowedUsers`: if set, only matching senders can interact with the
+  bot. Each entry matches by *userId* (digits-only), *email* (contains
+  `@`), or *username* (anything else). Applies to both DMs and rooms.
+- `allowedRooms`: if set, only listed `streamId`s (group conversations)
+  are processed. **DMs/1:1 IMs are NOT gated by this list** — use
+  `allowedUsers` to restrict DM access.
+- When both are set, the message must pass **both** filters (AND).
+- Omitting either filter means "allow everything for that dimension".
+
 Or with multiple accounts:
 
 ```yaml

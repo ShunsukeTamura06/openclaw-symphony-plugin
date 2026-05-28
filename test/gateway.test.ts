@@ -269,6 +269,141 @@ describe("handleInboundEnvelope", () => {
       expect(enqueueSpy).toHaveBeenCalledTimes(1);
     });
   });
+
+  describe("allowedRooms filter", () => {
+    const SELF_UID = 7777;
+
+    function makeRoomMessageWithMention(streamId: string): SymphonyMessage {
+      // include a mention of SELF_UID so the room-mention filter doesn't drop it
+      return {
+        messageId: `msg-${streamId}`,
+        timestamp: 1,
+        message: "<messageML>hi room</messageML>",
+        user: { userId: 100, displayName: "Alice" },
+        stream: { streamId, streamType: "ROOM" },
+        data: JSON.stringify({
+          "0": {
+            type: "com.symphony.user.mention",
+            id: [{ type: "com.symphony.user.userId", value: String(SELF_UID) }],
+          },
+        }),
+      };
+    }
+
+    it("drops a room message whose streamId is NOT in allowedRooms", () => {
+      const queue = new InboundQueue();
+      const dedupe = new MessageDedupeStore();
+      const enqueueSpy = vi.spyOn(queue, "enqueue").mockImplementation(() => undefined);
+      handleInboundEnvelope({
+        envelope: makeMessageSentEnvelope(makeRoomMessageWithMention("room-Z")),
+        cfg: {} as never,
+        accountId: "acc",
+        selfUserId: SELF_UID,
+        allowedRooms: ["room-A", "room-B"],
+        channelRuntime: undefined,
+        log: silentLog,
+        queue,
+        dedupe,
+      });
+      expect(enqueueSpy).not.toHaveBeenCalled();
+    });
+
+    it("accepts a room message whose streamId IS in allowedRooms", () => {
+      const queue = new InboundQueue();
+      const dedupe = new MessageDedupeStore();
+      const enqueueSpy = vi.spyOn(queue, "enqueue").mockImplementation(() => undefined);
+      handleInboundEnvelope({
+        envelope: makeMessageSentEnvelope(makeRoomMessageWithMention("room-A")),
+        cfg: {} as never,
+        accountId: "acc",
+        selfUserId: SELF_UID,
+        allowedRooms: ["room-A", "room-B"],
+        channelRuntime: undefined,
+        log: silentLog,
+        queue,
+        dedupe,
+      });
+      expect(enqueueSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it("does NOT gate DMs (IM streamType bypasses allowedRooms entirely)", () => {
+      const queue = new InboundQueue();
+      const dedupe = new MessageDedupeStore();
+      const enqueueSpy = vi.spyOn(queue, "enqueue").mockImplementation(() => undefined);
+      // makeSymphonyMessage produces an IM by default with stream-A
+      handleInboundEnvelope({
+        envelope: makeMessageSentEnvelope(makeSymphonyMessage()),
+        cfg: {} as never,
+        accountId: "acc",
+        selfUserId: SELF_UID,
+        allowedRooms: ["only-this-room"], // stream-A is NOT here
+        channelRuntime: undefined,
+        log: silentLog,
+        queue,
+        dedupe,
+      });
+      expect(enqueueSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it("empty allowedRooms => all rooms allowed (same as omitted)", () => {
+      const queue = new InboundQueue();
+      const dedupe = new MessageDedupeStore();
+      const enqueueSpy = vi.spyOn(queue, "enqueue").mockImplementation(() => undefined);
+      handleInboundEnvelope({
+        envelope: makeMessageSentEnvelope(makeRoomMessageWithMention("any-room")),
+        cfg: {} as never,
+        accountId: "acc",
+        selfUserId: SELF_UID,
+        allowedRooms: [],
+        channelRuntime: undefined,
+        log: silentLog,
+        queue,
+        dedupe,
+      });
+      expect(enqueueSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it("composes with allowedUsers as AND (both must pass)", () => {
+      const queue = new InboundQueue();
+      const dedupe = new MessageDedupeStore();
+      const enqueueSpy = vi.spyOn(queue, "enqueue").mockImplementation(() => undefined);
+      // sender userId=100, allowedUsers contains "100" -> user OK
+      // streamId=room-X, allowedRooms=["room-A"] -> room NOT OK
+      // Expect: blocked
+      handleInboundEnvelope({
+        envelope: makeMessageSentEnvelope(makeRoomMessageWithMention("room-X")),
+        cfg: {} as never,
+        accountId: "acc",
+        selfUserId: SELF_UID,
+        allowedUsers: ["100"],
+        allowedRooms: ["room-A"],
+        channelRuntime: undefined,
+        log: silentLog,
+        queue,
+        dedupe,
+      });
+      expect(enqueueSpy).not.toHaveBeenCalled();
+    });
+
+    it("composes with allowedUsers: both pass => message goes through", () => {
+      const queue = new InboundQueue();
+      const dedupe = new MessageDedupeStore();
+      const enqueueSpy = vi.spyOn(queue, "enqueue").mockImplementation(() => undefined);
+      handleInboundEnvelope({
+        envelope: makeMessageSentEnvelope(makeRoomMessageWithMention("room-A")),
+        cfg: {} as never,
+        accountId: "acc",
+        selfUserId: SELF_UID,
+        allowedUsers: ["100"],
+        allowedRooms: ["room-A"],
+        channelRuntime: undefined,
+        log: silentLog,
+        queue,
+        dedupe,
+      });
+      expect(enqueueSpy).toHaveBeenCalledTimes(1);
+    });
+  });
 });
 
 function makeDeferred(): { promise: Promise<void>; resolve: () => void } {

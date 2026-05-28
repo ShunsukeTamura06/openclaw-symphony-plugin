@@ -128,6 +128,7 @@ export const symphonyGatewayAdapter = {
             accountId: ctx.accountId,
             ...(selfUserId !== undefined ? { selfUserId } : {}),
             ...(ctx.account.allowedUsers ? { allowedUsers: ctx.account.allowedUsers } : {}),
+            ...(ctx.account.allowedRooms ? { allowedRooms: ctx.account.allowedRooms } : {}),
             channelRuntime,
             log,
             queue: inboundQueue,
@@ -174,6 +175,7 @@ export function handleInboundEnvelope(params: {
   accountId: string;
   selfUserId?: number;
   allowedUsers?: string[];
+  allowedRooms?: string[];
   channelRuntime: FullChannelRuntime | undefined;
   log: ChannelLogSink;
   queue: InboundQueue;
@@ -206,6 +208,21 @@ export function handleInboundEnvelope(params: {
       );
       return;
     }
+  }
+  // Room (group conversation) whitelist. DMs/IMs are intentionally NOT
+  // gated here — use `allowedUsers` to restrict who can DM the bot.
+  // Both filters apply BEFORE dedupe and BEFORE enqueue, so a blocked
+  // message never reaches the LLM dispatch path.
+  if (
+    !normalized.isDirect &&
+    params.allowedRooms &&
+    params.allowedRooms.length > 0 &&
+    !params.allowedRooms.includes(normalized.streamId)
+  ) {
+    params.log.info(
+      `Symphony message ignored: stream ${normalized.streamId} not in allowedRooms`,
+    );
+    return;
   }
   // @mention required in group rooms for regular messages, but not for form submissions
   if (!isElementsAction && !normalized.isDirect && params.selfUserId !== undefined) {

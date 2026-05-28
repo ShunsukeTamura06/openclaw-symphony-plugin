@@ -59,6 +59,16 @@
                 "maximum": 600,
                 "description": "Override the bot JWT TTL in seconds. Default 290."
               },
+              "allowedUsers": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "Whitelist of users allowed to interact with the bot. Each entry is matched against the sender: digits-only => userId, contains '@' => email, otherwise => username. When omitted or empty, all users are allowed. Filter runs BEFORE LLM dispatch."
+              },
+              "allowedRooms": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "Whitelist of room/group streamIds the bot will engage with. Applies ONLY to non-direct conversations (ROOM/MIM); 1:1 IMs bypass this filter. When omitted or empty, all rooms are allowed. Filter runs BEFORE LLM dispatch."
+              },
               "defaultAccount": {
                 "type": "string",
                 "description": "Account id selected when no accountId is provided. Defaults to the first key under `accounts`, or 'default'."
@@ -77,7 +87,15 @@
                     "privateKeyPath": { "type": "string" },
                     "enabled": { "type": "boolean" },
                     "datafeedTag": { "type": "string" },
-                    "jwtTtlSec": { "type": "number" }
+                    "jwtTtlSec": { "type": "number" },
+                    "allowedUsers": {
+                      "type": "array",
+                      "items": { "type": "string" }
+                    },
+                    "allowedRooms": {
+                      "type": "array",
+                      "items": { "type": "string" }
+                    }
                   }
                 }
               }

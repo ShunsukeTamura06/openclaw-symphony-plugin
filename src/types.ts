@@ -23,6 +23,22 @@ export type SymphonyAccountConfig = {
    * When omitted or empty, all users are allowed.
    */
   allowedUsers?: string[];
+  /**
+   * Whitelist of rooms (group conversations) allowed to interact with
+   * OpenClaw via Symphony. Each entry is matched against the inbound
+   * message's `streamId` (the conversation/room ID Symphony assigns).
+   *
+   * Scope: applies ONLY to non-direct conversations (ROOM, MIM, etc.).
+   * 1:1 IMs are NOT gated by this list — use `allowedUsers` to restrict
+   * who can DM the bot.
+   *
+   * Semantics when both `allowedUsers` and `allowedRooms` are set:
+   * AND. A non-DM message is processed only if its sender passes
+   * `allowedUsers` AND its streamId is in `allowedRooms`.
+   *
+   * When omitted or empty, all rooms are allowed.
+   */
+  allowedRooms?: string[];
 };
 
 export type ResolvedSymphonyAccount = SymphonyAccountConfig & {

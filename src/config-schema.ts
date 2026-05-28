@@ -16,6 +16,18 @@ export const SymphonyAccountConfigSchema = z.object({
   enabled: z.boolean().optional().default(true),
   datafeedTag: z.string().optional(),
   jwtTtlSec: z.number().int().min(30).max(600).optional(),
+  allowedUsers: z
+    .array(z.string())
+    .optional()
+    .describe(
+      "Whitelist of users allowed to interact with the bot (userId / email / username). Empty => all allowed.",
+    ),
+  allowedRooms: z
+    .array(z.string())
+    .optional()
+    .describe(
+      "Whitelist of room/group streamIds the bot will engage with. Applies only to non-DM conversations. Empty => all allowed.",
+    ),
 });
 
 export const SymphonyChannelConfigSchema = z
