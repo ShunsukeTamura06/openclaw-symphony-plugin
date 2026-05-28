@@ -120,6 +120,69 @@ describe("getAccountConfig", () => {
     expect(getAccountConfig(inlineCfg, "prod")).toBeUndefined();
   });
 
+  // Regression: getAccountConfig used to silently drop allowedUsers /
+  // allowedRooms / denyDmsByDefault from the inline form, which made the
+  // gateway treat the whitelist as empty even when it was configured.
+  it("propagates allowedUsers from inline config (regression: was silently dropped)", () => {
+    const cfg = {
+      channels: {
+        symphony: {
+          podUrl: "https://pod.example.com",
+          agentUrl: "https://agent.example.com",
+          username: "bot",
+          privateKeyPath: "/k.pem",
+          allowedUsers: ["alice@example.com", "12345"],
+        },
+      },
+    };
+    expect(getAccountConfig(cfg, "default")?.allowedUsers).toEqual([
+      "alice@example.com",
+      "12345",
+    ]);
+  });
+
+  it("propagates allowedRooms from inline config", () => {
+    const cfg = {
+      channels: {
+        symphony: {
+          podUrl: "https://pod.example.com",
+          username: "bot",
+          privateKeyPath: "/k.pem",
+          allowedRooms: ["room-A", "room-B"],
+        },
+      },
+    };
+    expect(getAccountConfig(cfg, "default")?.allowedRooms).toEqual(["room-A", "room-B"]);
+  });
+
+  it("propagates denyDmsByDefault from inline config", () => {
+    const cfg = {
+      channels: {
+        symphony: {
+          podUrl: "https://pod.example.com",
+          username: "bot",
+          privateKeyPath: "/k.pem",
+          denyDmsByDefault: false,
+        },
+      },
+    };
+    expect(getAccountConfig(cfg, "default")?.denyDmsByDefault).toBe(false);
+  });
+
+  it("ignores malformed allowedUsers (not an array of strings)", () => {
+    const cfg = {
+      channels: {
+        symphony: {
+          podUrl: "https://pod.example.com",
+          username: "bot",
+          privateKeyPath: "/k.pem",
+          allowedUsers: "alice", // wrong shape
+        },
+      },
+    };
+    expect(getAccountConfig(cfg, "default")?.allowedUsers).toBeUndefined();
+  });
+
   it("returns undefined when neither accounts nor inline fields are present", () => {
     expect(getAccountConfig({}, "anything")).toBeUndefined();
     expect(getAccountConfig({ channels: { symphony: {} } }, "default")).toBeUndefined();

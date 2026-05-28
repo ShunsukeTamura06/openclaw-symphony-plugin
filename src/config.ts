@@ -66,8 +66,19 @@ export function getAccountConfig(
     }
   }
   if (id === DEFAULT_ACCOUNT_ID && hasInlineAccountFields(block)) {
-    const { podUrl, agentUrl, relayUrl, username, privateKeyPath, enabled, datafeedTag, jwtTtlSec } =
-      block as Record<string, unknown>;
+    const {
+      podUrl,
+      agentUrl,
+      relayUrl,
+      username,
+      privateKeyPath,
+      enabled,
+      datafeedTag,
+      jwtTtlSec,
+      allowedUsers,
+      allowedRooms,
+      denyDmsByDefault,
+    } = block as Record<string, unknown>;
     return {
       podUrl: String(podUrl),
       agentUrl: String(agentUrl ?? podUrl),
@@ -77,9 +88,16 @@ export function getAccountConfig(
       ...(typeof enabled === "boolean" ? { enabled } : {}),
       ...(typeof datafeedTag === "string" ? { datafeedTag } : {}),
       ...(typeof jwtTtlSec === "number" ? { jwtTtlSec } : {}),
+      ...(isStringArray(allowedUsers) ? { allowedUsers } : {}),
+      ...(isStringArray(allowedRooms) ? { allowedRooms } : {}),
+      ...(typeof denyDmsByDefault === "boolean" ? { denyDmsByDefault } : {}),
     };
   }
   return undefined;
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((entry) => typeof entry === "string");
 }
 
 export function isAccountConfigured(account: SymphonyAccountConfig | undefined): boolean {
