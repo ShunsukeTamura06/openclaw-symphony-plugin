@@ -28,6 +28,12 @@ export const SymphonyAccountConfigSchema = z.object({
     .describe(
       "Whitelist of room/group streamIds the bot will engage with. Applies only to non-DM conversations. Empty => all allowed.",
     ),
+  denyDmsByDefault: z
+    .boolean()
+    .optional()
+    .describe(
+      "Default DM policy. When true (default), DMs require the sender to be in allowedUsers; if allowedUsers is unset/empty, all DMs are blocked. Set to false for permissive legacy behavior (DM open by default).",
+    ),
 });
 
 export const SymphonyChannelConfigSchema = z

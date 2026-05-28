@@ -129,6 +129,9 @@ export const symphonyGatewayAdapter = {
             ...(selfUserId !== undefined ? { selfUserId } : {}),
             ...(ctx.account.allowedUsers ? { allowedUsers: ctx.account.allowedUsers } : {}),
             ...(ctx.account.allowedRooms ? { allowedRooms: ctx.account.allowedRooms } : {}),
+            ...(ctx.account.denyDmsByDefault !== undefined
+              ? { denyDmsByDefault: ctx.account.denyDmsByDefault }
+              : {}),
             channelRuntime,
             log,
             queue: inboundQueue,
@@ -176,6 +179,7 @@ export function handleInboundEnvelope(params: {
   selfUserId?: number;
   allowedUsers?: string[];
   allowedRooms?: string[];
+  denyDmsByDefault?: boolean;
   channelRuntime: FullChannelRuntime | undefined;
   log: ChannelLogSink;
   queue: InboundQueue;
@@ -208,6 +212,22 @@ export function handleInboundEnvelope(params: {
       );
       return;
     }
+  }
+  // DM safety: when default policy is deny (the new default), reject DMs
+  // that arrive without an explicit allowlist. Together with the allowedUsers
+  // check above, the effective rule for DMs becomes:
+  //   - allowedUsers set    -> only listed senders can DM (allowedUsers filtered them)
+  //   - allowedUsers unset  -> ALL DMs blocked  (this branch)
+  // Set denyDmsByDefault: false to restore the permissive legacy behavior.
+  if (
+    normalized.isDirect &&
+    params.denyDmsByDefault !== false &&
+    (!params.allowedUsers || params.allowedUsers.length === 0)
+  ) {
+    params.log.info(
+      `Symphony DM blocked: denyDmsByDefault and no allowedUsers configured (sender=${normalized.sender.id})`,
+    );
+    return;
   }
   // Room (group conversation) whitelist. DMs/IMs are intentionally NOT
   // gated here — use `allowedUsers` to restrict who can DM the bot.

@@ -104,6 +104,7 @@ describe("handleInboundEnvelope", () => {
       envelope: makeMessageSentEnvelope(makeSymphonyMessage()),
       cfg: {} as never,
       accountId: "acc",
+      denyDmsByDefault: false,
       channelRuntime: slowRuntime as never,
       log: silentLog,
       queue,
@@ -127,6 +128,7 @@ describe("handleInboundEnvelope", () => {
       envelope,
       cfg: {} as never,
       accountId: "acc",
+      denyDmsByDefault: false,
       channelRuntime: undefined,
       log: silentLog,
       queue,
@@ -136,6 +138,7 @@ describe("handleInboundEnvelope", () => {
       envelope,
       cfg: {} as never,
       accountId: "acc",
+      denyDmsByDefault: false,
       channelRuntime: undefined,
       log: silentLog,
       queue,
@@ -155,6 +158,7 @@ describe("handleInboundEnvelope", () => {
       envelope,
       cfg: {} as never,
       accountId: "acc-A",
+      denyDmsByDefault: false,
       channelRuntime: undefined,
       log: silentLog,
       queue,
@@ -164,6 +168,7 @@ describe("handleInboundEnvelope", () => {
       envelope,
       cfg: {} as never,
       accountId: "acc-B",
+      denyDmsByDefault: false,
       channelRuntime: undefined,
       log: silentLog,
       queue,
@@ -261,6 +266,7 @@ describe("handleInboundEnvelope", () => {
         cfg: {} as never,
         accountId: "acc",
         selfUserId: SELF_UID,
+        denyDmsByDefault: false,
         channelRuntime: undefined,
         log: silentLog,
         queue,
@@ -330,13 +336,16 @@ describe("handleInboundEnvelope", () => {
       const queue = new InboundQueue();
       const dedupe = new MessageDedupeStore();
       const enqueueSpy = vi.spyOn(queue, "enqueue").mockImplementation(() => undefined);
-      // makeSymphonyMessage produces an IM by default with stream-A
+      // makeSymphonyMessage produces an IM by default with stream-A.
+      // denyDmsByDefault: false so the DM-deny safety doesn't fire — this
+      // test is specifically about allowedRooms NOT gating DMs.
       handleInboundEnvelope({
         envelope: makeMessageSentEnvelope(makeSymphonyMessage()),
         cfg: {} as never,
         accountId: "acc",
         selfUserId: SELF_UID,
         allowedRooms: ["only-this-room"], // stream-A is NOT here
+        denyDmsByDefault: false,
         channelRuntime: undefined,
         log: silentLog,
         queue,
@@ -396,6 +405,115 @@ describe("handleInboundEnvelope", () => {
         selfUserId: SELF_UID,
         allowedUsers: ["100"],
         allowedRooms: ["room-A"],
+        channelRuntime: undefined,
+        log: silentLog,
+        queue,
+        dedupe,
+      });
+      expect(enqueueSpy).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("denyDmsByDefault (DM policy)", () => {
+    it("blocks DMs when default policy applies AND allowedUsers is unset (the new default)", () => {
+      const queue = new InboundQueue();
+      const dedupe = new MessageDedupeStore();
+      const enqueueSpy = vi.spyOn(queue, "enqueue").mockImplementation(() => undefined);
+      handleInboundEnvelope({
+        // makeSymphonyMessage produces an IM stream by default
+        envelope: makeMessageSentEnvelope(makeSymphonyMessage()),
+        cfg: {} as never,
+        accountId: "acc",
+        // denyDmsByDefault omitted => default true
+        channelRuntime: undefined,
+        log: silentLog,
+        queue,
+        dedupe,
+      });
+      expect(enqueueSpy).not.toHaveBeenCalled();
+    });
+
+    it("blocks DMs when denyDmsByDefault is explicitly true AND allowedUsers is empty", () => {
+      const queue = new InboundQueue();
+      const dedupe = new MessageDedupeStore();
+      const enqueueSpy = vi.spyOn(queue, "enqueue").mockImplementation(() => undefined);
+      handleInboundEnvelope({
+        envelope: makeMessageSentEnvelope(makeSymphonyMessage()),
+        cfg: {} as never,
+        accountId: "acc",
+        denyDmsByDefault: true,
+        allowedUsers: [],
+        channelRuntime: undefined,
+        log: silentLog,
+        queue,
+        dedupe,
+      });
+      expect(enqueueSpy).not.toHaveBeenCalled();
+    });
+
+    it("allows DMs when sender is in allowedUsers (regardless of denyDmsByDefault)", () => {
+      const queue = new InboundQueue();
+      const dedupe = new MessageDedupeStore();
+      const enqueueSpy = vi.spyOn(queue, "enqueue").mockImplementation(() => undefined);
+      // makeSymphonyMessage defaults to sender { id: 100 }
+      handleInboundEnvelope({
+        envelope: makeMessageSentEnvelope(makeSymphonyMessage()),
+        cfg: {} as never,
+        accountId: "acc",
+        denyDmsByDefault: true,
+        allowedUsers: ["100"],
+        channelRuntime: undefined,
+        log: silentLog,
+        queue,
+        dedupe,
+      });
+      expect(enqueueSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it("denyDmsByDefault: false restores legacy permissive DM behavior", () => {
+      const queue = new InboundQueue();
+      const dedupe = new MessageDedupeStore();
+      const enqueueSpy = vi.spyOn(queue, "enqueue").mockImplementation(() => undefined);
+      handleInboundEnvelope({
+        envelope: makeMessageSentEnvelope(makeSymphonyMessage()),
+        cfg: {} as never,
+        accountId: "acc",
+        denyDmsByDefault: false,
+        // allowedUsers omitted -> empty
+        channelRuntime: undefined,
+        log: silentLog,
+        queue,
+        dedupe,
+      });
+      expect(enqueueSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it("denyDmsByDefault does NOT affect non-DM (room) traffic", () => {
+      const queue = new InboundQueue();
+      const dedupe = new MessageDedupeStore();
+      const enqueueSpy = vi.spyOn(queue, "enqueue").mockImplementation(() => undefined);
+      // a room message mentioning the bot (SELF_UID = 7777) so the
+      // group-mention filter doesn't drop it
+      const roomMsg: SymphonyMessage = {
+        messageId: "room-msg",
+        timestamp: 1,
+        message: "<messageML>hi</messageML>",
+        user: { userId: 100, displayName: "Alice" },
+        stream: { streamId: "any-room", streamType: "ROOM" },
+        data: JSON.stringify({
+          "0": {
+            type: "com.symphony.user.mention",
+            id: [{ type: "com.symphony.user.userId", value: "7777" }],
+          },
+        }),
+      };
+      handleInboundEnvelope({
+        envelope: makeMessageSentEnvelope(roomMsg),
+        cfg: {} as never,
+        accountId: "acc",
+        selfUserId: 7777,
+        // denyDmsByDefault default (true) — should not block a room msg
+        // allowedUsers unset — would block DMs but this is a ROOM
         channelRuntime: undefined,
         log: silentLog,
         queue,

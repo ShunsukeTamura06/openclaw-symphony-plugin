@@ -29,8 +29,8 @@ export type SymphonyAccountConfig = {
    * message's `streamId` (the conversation/room ID Symphony assigns).
    *
    * Scope: applies ONLY to non-direct conversations (ROOM, MIM, etc.).
-   * 1:1 IMs are NOT gated by this list — use `allowedUsers` to restrict
-   * who can DM the bot.
+   * 1:1 IMs are NOT gated by this list — DMs are governed by
+   * `allowedUsers` + `denyDmsByDefault`.
    *
    * Semantics when both `allowedUsers` and `allowedRooms` are set:
    * AND. A non-DM message is processed only if its sender passes
@@ -39,6 +39,20 @@ export type SymphonyAccountConfig = {
    * When omitted or empty, all rooms are allowed.
    */
   allowedRooms?: string[];
+  /**
+   * Default DM (1:1 IM) policy. When `true` (the default), DMs are
+   * gated by `allowedUsers`:
+   *   - if `allowedUsers` is set, only listed senders can DM the bot
+   *   - if `allowedUsers` is unset/empty, ALL DMs are blocked
+   *
+   * Set to `false` to restore the permissive legacy behavior where
+   * any user can DM the bot when `allowedUsers` is unset. The
+   * `allowedUsers` filter (when set) still applies in either case.
+   *
+   * Note: defaults to deny-by-default for safety — empty allowlist
+   * should not equal "open to anyone".
+   */
+  denyDmsByDefault?: boolean;
 };
 
 export type ResolvedSymphonyAccount = SymphonyAccountConfig & {

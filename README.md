@@ -77,10 +77,24 @@ channels:
   bot. Each entry matches by *userId* (digits-only), *email* (contains
   `@`), or *username* (anything else). Applies to both DMs and rooms.
 - `allowedRooms`: if set, only listed `streamId`s (group conversations)
-  are processed. **DMs/1:1 IMs are NOT gated by this list** — use
-  `allowedUsers` to restrict DM access.
-- When both are set, the message must pass **both** filters (AND).
-- Omitting either filter means "allow everything for that dimension".
+  are processed. **DMs/1:1 IMs are NOT gated by this list** — DMs are
+  governed by `allowedUsers` + `denyDmsByDefault` instead.
+- `denyDmsByDefault` (default **`true`**, since v0.2): DMs are gated by
+  `allowedUsers`:
+    - if `allowedUsers` is set, only listed senders can DM the bot
+    - if `allowedUsers` is unset/empty, **ALL DMs are blocked**
+  Set `denyDmsByDefault: false` to restore the permissive legacy
+  behavior where any user could DM the bot when `allowedUsers` was unset.
+- When `allowedUsers` and `allowedRooms` are both set, room messages
+  must pass **both** filters (AND).
+- Omitting `allowedUsers` and `allowedRooms` means "allow everything in
+  rooms"; DMs are still blocked by `denyDmsByDefault` unless you opt out.
+
+> ⚠️ **Upgrade note (v0.1.x → v0.2)**: the default DM policy now denies
+> DMs from anyone not in `allowedUsers`. If your previous setup relied
+> on open DMs (no `allowedUsers` configured), either:
+> 1. populate `allowedUsers` with the people allowed to DM the bot, or
+> 2. set `denyDmsByDefault: false` to keep the old behavior.
 
 Or with multiple accounts:
 

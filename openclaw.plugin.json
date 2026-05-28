@@ -69,6 +69,11 @@
                 "items": { "type": "string" },
                 "description": "Whitelist of room/group streamIds the bot will engage with. Applies ONLY to non-direct conversations (ROOM/MIM); 1:1 IMs bypass this filter. When omitted or empty, all rooms are allowed. Filter runs BEFORE LLM dispatch."
               },
+              "denyDmsByDefault": {
+                "type": "boolean",
+                "default": true,
+                "description": "Default DM policy. When true (the default), DMs require the sender to be in allowedUsers — if allowedUsers is unset/empty, all DMs are blocked. Set to false to restore the permissive legacy behavior (DMs open to anyone when allowedUsers is unset)."
+              },
               "defaultAccount": {
                 "type": "string",
                 "description": "Account id selected when no accountId is provided. Defaults to the first key under `accounts`, or 'default'."
@@ -95,6 +100,9 @@
                     "allowedRooms": {
                       "type": "array",
                       "items": { "type": "string" }
+                    },
+                    "denyDmsByDefault": {
+                      "type": "boolean"
                     }
                   }
                 }
