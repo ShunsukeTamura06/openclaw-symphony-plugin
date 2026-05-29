@@ -1,6 +1,26 @@
 import { messageMlToPlain } from "./messageml.js";
 import type { DatafeedEventEnvelope, SymphonyMessage } from "./symphony/types.js";
 
+/**
+ * Symphony stream IDs are base64. The Symphony web client copy-action
+ * yields standard base64 (with `+` `/` `=`), but Datafeed v5 events deliver
+ * the same id in URL-safe base64 (`-` `_`, optional `=`). Operators
+ * typically paste the clipboard form into the config, but our filters
+ * compare against the Datafeed form — so a literal `===` comparison
+ * misses every legitimate match.
+ *
+ * Canonicalize to URL-safe (the Datafeed form) and strip trailing
+ * padding so the same conversation matches regardless of which form
+ * the operator pasted.
+ */
+export function normalizeStreamId(id: string): string {
+  if (!id) return "";
+  return id
+    .replace(/\+/gu, "-")
+    .replace(/\//gu, "_")
+    .replace(/=+$/u, "");
+}
+
 export type NormalizedAttachment = {
   id: string;
   filename: string;

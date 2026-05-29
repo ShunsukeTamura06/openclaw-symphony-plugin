@@ -12,6 +12,7 @@ import {
   extractMessageFromEvent,
   normalizeElementsAction,
   normalizeInboundMessage,
+  normalizeStreamId,
   type NormalizedInboundMessage,
 } from "./normalize.js";
 import { textWithSymphonyFormToMessageMl } from "./messageml.js";
@@ -230,19 +231,28 @@ export function handleInboundEnvelope(params: {
     return;
   }
   // Room (group conversation) whitelist. DMs/IMs are intentionally NOT
-  // gated here — use `allowedUsers` to restrict who can DM the bot.
-  // Both filters apply BEFORE dedupe and BEFORE enqueue, so a blocked
-  // message never reaches the LLM dispatch path.
+  // gated here — DM access is governed by allowedUsers + denyDmsByDefault.
+  // Filter applies BEFORE dedupe and BEFORE enqueue.
+  //
+  // streamId comparison is base64-form-insensitive: Symphony's clipboard
+  // copy gives standard base64 (`+` `/` `=`) but Datafeed delivers
+  // URL-safe (`-` `_`). normalizeStreamId canonicalizes both sides so the
+  // operator can paste either form.
   if (
     !normalized.isDirect &&
     params.allowedRooms &&
-    params.allowedRooms.length > 0 &&
-    !params.allowedRooms.includes(normalized.streamId)
+    params.allowedRooms.length > 0
   ) {
-    params.log.info(
-      `Symphony message ignored: stream ${normalized.streamId} not in allowedRooms`,
+    const wantedStream = normalizeStreamId(normalized.streamId);
+    const allowed = params.allowedRooms.some(
+      (entry) => normalizeStreamId(entry) === wantedStream,
     );
-    return;
+    if (!allowed) {
+      params.log.info(
+        `Symphony message ignored: stream ${normalized.streamId} not in allowedRooms`,
+      );
+      return;
+    }
   }
   // @mention required in group rooms for regular messages, but not for form submissions
   if (!isElementsAction && !normalized.isDirect && params.selfUserId !== undefined) {

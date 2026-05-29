@@ -394,6 +394,66 @@ describe("handleInboundEnvelope", () => {
       expect(enqueueSpy).not.toHaveBeenCalled();
     });
 
+    it("matches across base64 forms: clipboard '/' equals Datafeed '_'", () => {
+      // Symphony web client copy gives standard base64 (slash). Datafeed
+      // delivers URL-safe (underscore). Both should match.
+      const queue = new InboundQueue();
+      const dedupe = new MessageDedupeStore();
+      const enqueueSpy = vi.spyOn(queue, "enqueue").mockImplementation(() => undefined);
+      // Inbound streamId is URL-safe (this is what Datafeed sends).
+      const inboundStreamId = "vTOlxOhTcjFCKZ8GHrSlhX___oRm1dlFdA";
+      // Operator pasted the clipboard (standard base64) form.
+      const configEntry = "vTOlxOhTcjFCKZ8GHrSlhX///oRm1dlFdA";
+      handleInboundEnvelope({
+        envelope: makeMessageSentEnvelope(makeRoomMessageWithMention(inboundStreamId)),
+        cfg: {} as never,
+        accountId: "acc",
+        selfUserId: SELF_UID,
+        allowedRooms: [configEntry],
+        channelRuntime: undefined,
+        log: silentLog,
+        queue,
+        dedupe,
+      });
+      expect(enqueueSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it("matches across base64 forms: standard '+' equals URL-safe '-'", () => {
+      const queue = new InboundQueue();
+      const dedupe = new MessageDedupeStore();
+      const enqueueSpy = vi.spyOn(queue, "enqueue").mockImplementation(() => undefined);
+      handleInboundEnvelope({
+        envelope: makeMessageSentEnvelope(makeRoomMessageWithMention("abc-def_GHI")),
+        cfg: {} as never,
+        accountId: "acc",
+        selfUserId: SELF_UID,
+        allowedRooms: ["abc+def/GHI=="],
+        channelRuntime: undefined,
+        log: silentLog,
+        queue,
+        dedupe,
+      });
+      expect(enqueueSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it("trailing '=' padding is ignored when matching", () => {
+      const queue = new InboundQueue();
+      const dedupe = new MessageDedupeStore();
+      const enqueueSpy = vi.spyOn(queue, "enqueue").mockImplementation(() => undefined);
+      handleInboundEnvelope({
+        envelope: makeMessageSentEnvelope(makeRoomMessageWithMention("room-A")),
+        cfg: {} as never,
+        accountId: "acc",
+        selfUserId: SELF_UID,
+        allowedRooms: ["room-A=="],
+        channelRuntime: undefined,
+        log: silentLog,
+        queue,
+        dedupe,
+      });
+      expect(enqueueSpy).toHaveBeenCalledTimes(1);
+    });
+
     it("composes with allowedUsers: both pass => message goes through", () => {
       const queue = new InboundQueue();
       const dedupe = new MessageDedupeStore();

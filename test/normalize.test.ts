@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { extractMessageFromEvent, normalizeInboundMessage } from "../src/normalize.js";
+import {
+  extractMessageFromEvent,
+  normalizeInboundMessage,
+  normalizeStreamId,
+} from "../src/normalize.js";
 import type { DatafeedEventEnvelope, SymphonyMessage } from "../src/symphony/types.js";
 
 const sampleMessage: SymphonyMessage = {
@@ -70,5 +74,32 @@ describe("extractMessageFromEvent", () => {
       payload: {},
     };
     expect(extractMessageFromEvent(envelope)).toBeNull();
+  });
+});
+
+describe("normalizeStreamId", () => {
+  it("canonicalizes standard base64 to URL-safe (+ -> -, / -> _)", () => {
+    expect(normalizeStreamId("ab+cd/ef")).toBe("ab-cd_ef");
+  });
+
+  it("strips trailing '=' padding", () => {
+    expect(normalizeStreamId("abcdef==")).toBe("abcdef");
+    expect(normalizeStreamId("abcdef=")).toBe("abcdef");
+  });
+
+  it("leaves an already URL-safe id unchanged", () => {
+    expect(normalizeStreamId("vTOlxOhTcjFCKZ8GHrSlhX___oRm1dlFdA")).toBe(
+      "vTOlxOhTcjFCKZ8GHrSlhX___oRm1dlFdA",
+    );
+  });
+
+  it("clipboard form and Datafeed form of the same stream normalize equal", () => {
+    const clipboard = "vTOlxOhTcjFCKZ8GHrSlhX///oRm1dlFdA==";
+    const datafeed = "vTOlxOhTcjFCKZ8GHrSlhX___oRm1dlFdA";
+    expect(normalizeStreamId(clipboard)).toBe(normalizeStreamId(datafeed));
+  });
+
+  it("empty input returns empty", () => {
+    expect(normalizeStreamId("")).toBe("");
   });
 });

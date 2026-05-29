@@ -73,6 +73,13 @@ channels:
       - "abcDEF123_-=="                         # another room
 ```
 
+> **Tip:** Either base64 form of the streamId works in `allowedRooms`.
+> The Symphony web client's "Copy ID" gives you standard base64
+> (`vTOlxOhTcjFCKZ8GHrSlhX///oRm1dlFdA==`), while Datafeed delivers the
+> URL-safe form (`vTOlxOhTcjFCKZ8GHrSlhX___oRm1dlFdA`). The matcher
+> canonicalizes both sides, so you can paste whatever the client gave
+> you without translation.
+
 - `allowedUsers`: if set, only matching senders can interact with the
   bot. Each entry matches by *userId* (digits-only), *email* (contains
   `@`), or *username* (anything else). Applies to both DMs and rooms.
